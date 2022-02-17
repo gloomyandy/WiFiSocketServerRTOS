@@ -47,4 +47,4 @@ This is a brief description howto setup the build environment for DuetWifiSocket
 ## Links
 
 - forum - https://forum.duet3d.com/
-- wiki - https://duet3d.dozuki.com/
+- Documentation - https://docs.duet3d.com
