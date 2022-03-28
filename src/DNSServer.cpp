@@ -6,6 +6,47 @@
 #include "Config.h"
 #include "DNSServer.h"
 
+typedef enum {
+  SERVER_STOP = 1,
+  SERVER_START = 2
+} dns_state_t;
+
+void DNSServer::task(void* p)
+{
+  DNSServer* server = reinterpret_cast<DNSServer*>(p);
+  uint32_t flags = 0;
+  while(xTaskNotifyWait(0, UINT_MAX, &flags, portMAX_DELAY) == pdTRUE) {
+    if (!(flags & SERVER_STOP)) {
+      if((flags & SERVER_START) && server->_udp == nullptr) {
+          struct netconn* temp = netconn_new(NETCONN_UDP);
+          if (temp)
+          {
+            netconn_set_recvtimeout(temp, 100);
+            err_t rc = netconn_bind(temp, IP4_ADDR_ANY, server->_port);
+            if (rc == ERR_OK) {
+              server->_udp = temp;
+            } else {
+              netconn_close(temp);
+              netconn_delete(temp);
+              server->_udp = nullptr;
+            }
+          }
+      }
+
+      server->processNextRequest();
+      xTaskNotify(server->taskHdl, 0, eNoAction);
+    } else {
+      if (server->_udp) {
+        netconn_close(server->_udp);
+        netconn_delete(server->_udp);
+        server->_udp = nullptr;
+        free(server->_buffer);
+        server->_buffer = NULL;
+      }
+    }
+  }
+}
+
 void replace(std::string &data, std::string to_replace, std::string replacement)
 {
     size_t pos = data.find(to_replace);
@@ -35,22 +76,13 @@ bool DNSServer::start(const uint16_t &port, const std::string &domainName,
   _resolvedIP[3] = resolvedIPAddr[3];
   downcaseAndRemoveWwwPrefix(_domainName);
 
-  struct netconn* temp = netconn_new(NETCONN_UDP);
-
-  if (temp)
-  {
-    netconn_set_nonblocking(temp, 1);
-    err_t rc = netconn_bind(temp, IP4_ADDR_ANY, _port);
-    if (rc == ERR_OK) {
-      _udp = temp;
-      return 1;
-    }
-    netconn_close(temp);
-    netconn_delete(temp);
-    _udp = nullptr;
+  if (!taskHdl) {
+    xTaskCreate(&task, "dnsSrv", DNS_SERVER_STACK, this, DNS_SERVER_PRIO, &taskHdl);
   }
 
-  return 0;
+  xTaskNotify(taskHdl, SERVER_START, eSetValueWithOverwrite);
+
+  return true;
 }
 
 void DNSServer::setErrorReplyCode(const DNSReplyCode &replyCode)
@@ -65,11 +97,7 @@ void DNSServer::setTTL(const uint32_t &ttl)
 
 void DNSServer::stop()
 {
-  netconn_close(_udp);
-  netconn_delete(_udp);
-  _udp = nullptr;
-  free(_buffer);
-  _buffer = NULL;
+  xTaskNotify(taskHdl, SERVER_STOP, eSetValueWithOverwrite);
 }
 
 void DNSServer::downcaseAndRemoveWwwPrefix(std::string &domainName)
@@ -87,7 +115,7 @@ void DNSServer::processNextRequest()
 
   _currentPacketSize = data ? netbuf_len(data) : 0;
 
-  if (_currentPacketSize > 0) 
+  if (_currentPacketSize > 0)
   {
     _remotePort = netbuf_fromport(data);
     memcpy(&_remoteIp, netbuf_fromaddr(data), sizeof(_remoteIp));
@@ -160,8 +188,8 @@ void DNSServer::replyWithIP()
   if (_buffer == NULL) return;
   _dnsHeader->QR = DNS_QR_RESPONSE;
   _dnsHeader->ANCount = _dnsHeader->QDCount;
-  _dnsHeader->QDCount = _dnsHeader->QDCount; 
-  // _dnsHeader->RA = 1;  
+  _dnsHeader->QDCount = _dnsHeader->QDCount;
+  // _dnsHeader->RA = 1;
 
   struct netbuf* data = netbuf_new();
   uint8_t* allocd = (uint8_t*)netbuf_alloc(data, _currentPacketSize + 16);
@@ -178,24 +206,19 @@ void DNSServer::replyWithIP()
   more[4] = 0; //0x0001 answer is class IN (internet address)
   more[5] = 1;
 
-  more[6] = ((uint8_t*)_ttl)[3];
-  more[7] = ((uint8_t*)_ttl)[2];
-  more[8] = ((uint8_t*)_ttl)[1];
-  more[9] = ((uint8_t*)_ttl)[0];
+  memcpy(&more[6], &_ttl, 4);
 
   // Length of RData is 4 bytes (because, in this case, RData is IPv4)
   more[10] = 0;
   more[11] = 4;
-  more[12] = _resolvedIP[3];
-  more[13] = _resolvedIP[2];
-  more[14] = _resolvedIP[1];
-  more[15] = _resolvedIP[0];
+
+  memcpy(&more[12], _resolvedIP, 4);
 
   netconn_sendto(_udp, data, &_remoteIp, _remotePort);
   netbuf_delete(data);
 
-  debugPrintf("DNS responds: %u.%u.%u.%u for %s\n", 
-            _resolvedIP[0], _resolvedIP[1], _resolvedIP[2], _resolvedIP[3], 
+  debugPrintf("DNS responds: %u.%u.%u.%u for %s\n",
+            _resolvedIP[0], _resolvedIP[1], _resolvedIP[2], _resolvedIP[3],
             getDomainNameWithoutWwwPrefix().c_str());
 }
 

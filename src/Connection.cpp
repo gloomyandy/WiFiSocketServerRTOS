@@ -13,16 +13,17 @@
 #include "Misc.h"				// for millis
 #include "Config.h"
 
+const uint32_t MaxWriteTime = 2000;		// how long we wait for a write operation to complete before it is cancelled
 const uint32_t MaxAckTime = 4000;		// how long we wait for a connection to acknowledge the remaining data before it is closed
 
 // Public interface
 Connection::Connection(uint8_t num)
 	: number(num), state(ConnState::free), localPort(0), remotePort(0), remoteIp(0),
-	  closeTimer(0), readIndex(0), alreadyRead(0), ownPcb(nullptr), pb(nullptr)
+	closeTimer(0), readIndex(0), alreadyRead(0), ownPcb(nullptr), pb(nullptr)
 {
 }
 
-void Connection::GetStatus(ConnStatusResponse& resp) const
+void IRAM_ATTR Connection::GetStatus(ConnStatusResponse& resp) const
 {
 	resp.socketNumber = number;
 	resp.state = state;
@@ -33,7 +34,10 @@ void Connection::GetStatus(ConnStatusResponse& resp) const
 	resp.remoteIp = remoteIp;
 }
 
-// Close the connection gracefully
+// Close the connection.
+// If 'external' is true then the Duet main processor has requested termination, so we free up the connection.
+// Otherwise it has failed because of an internal error, and we set the state to 'aborted'. The Duet main processor will see this and send a termination request,
+// which will free it up.
 void Connection::Close()
 {
 	switch(state)
@@ -65,14 +69,10 @@ void Connection::Close()
 	}
 }
 
-// Terminate the connection.
-// If 'external' is true then the Duet main processor has requested termination, so we free up the connection.
-// Otherwise it has failed because of an internal error, and we set the state to 'aborted'. The Duet main processor will see this and send a termination request,
-// which will free it up.
 void Connection::Terminate(bool external)
 {
-	if (ownPcb != nullptr)
-	{
+	if (ownPcb) {
+		// Terminate immediately
 		netconn_close(ownPcb);
 		netconn_delete(ownPcb);
 		ownPcb = nullptr;
@@ -81,51 +81,10 @@ void Connection::Terminate(bool external)
 	SetState((external) ? ConnState::free : ConnState::aborted);
 }
 
-void Connection::PollRead()
-{
-	struct pbuf *data = nullptr;
-	err_t rc = netconn_recv_tcp_pbuf_flags(ownPcb, &data, NETCONN_NOAUTORCVD);
-
-	while(rc == ERR_OK) {
-		if (pb == nullptr) {
-			pb = data;
-			readIndex = alreadyRead = 0;
-		} else {
-			pbuf_cat(pb, data);
-		}
-		data = nullptr;
-		rc = netconn_recv_tcp_pbuf_flags(ownPcb, &data, NETCONN_NOAUTORCVD);
-	}
-
-	if (rc != ERR_WOULDBLOCK) {
-		if (rc == ERR_RST)
-		{
-			SetState(ConnState::otherEndClosed);
-		} else
-		{
-			Terminate(false);
-		}
-	}
-}
-
-void Connection::PollReadAll()
-{
-	for (size_t i = 0; i < MaxConnections; ++i)
-	{
-		if (connectionList[i]->state == ConnState::connected || connectionList[i]->state == ConnState::otherEndClosed)
-		{
-			connectionList[i]->PollRead();
-		}
-	}
-}
-
 // Perform housekeeping tasks
-void Connection::Poll()
+void IRAM_ATTR Connection::Poll()
 {
-	if (state == ConnState::connected)
-	{
-	}
-	else if (state == ConnState::closeReady)
+	if (state == ConnState::closeReady)
 	{
 		// Deferred close, possibly outside the ISR
 		Close();
@@ -138,6 +97,36 @@ void Connection::Poll()
 			}
 		} else {
 			SetState(ConnState::closeReady);
+		}
+	}
+}
+
+void IRAM_ATTR Connection::PollRead()
+{
+	if (state == ConnState::connected || state == ConnState::otherEndClosed)
+	{
+		struct pbuf *data = nullptr;
+		err_t rc = netconn_recv_tcp_pbuf_flags(ownPcb, &data, NETCONN_NOAUTORCVD);
+
+		while(rc == ERR_OK) {
+			if (pb == nullptr) {
+				pb = data;
+				readIndex = alreadyRead = 0;
+			} else {
+				pbuf_cat(pb, data);
+			}
+			data = nullptr;
+			rc = netconn_recv_tcp_pbuf_flags(ownPcb, &data, NETCONN_NOAUTORCVD);
+		}
+
+		if (rc != ERR_WOULDBLOCK) {
+			if (rc == ERR_RST)
+			{
+				SetState(ConnState::otherEndClosed);
+			} else
+			{
+				Terminate(false);
+			}
 		}
 	}
 }
@@ -162,7 +151,7 @@ void Connection::Poll()
 // A further mitigation would be to restrict the amount of data we accept so some amount that will fit in the MSS, then tcp_write will need to allocate at most one PBUF.
 // However, another reason why tcp_write can fail is because MEMP_NUM_TCP_SEG is set too low in Lwip. It now appears that this is the maoin cause of files tcp_write
 // call in version 1.21. So I have increased it from 10 to 16, which seems to have fixed the problem..
-size_t Connection::Write(const uint8_t *data, size_t length, bool doPush, bool closeAfterSending)
+size_t IRAM_ATTR Connection::Write(const uint8_t *data, size_t length, bool doPush, bool closeAfterSending)
 {
 	if (state != ConnState::connected)
 	{
@@ -176,10 +165,9 @@ size_t Connection::Write(const uint8_t *data, size_t length, bool doPush, bool c
 
 	size_t total = 0;
 	size_t written = 0;
-	int loop = 0;
 	err_t rc = ERR_OK;
 
-	for( ; total < length; total += written, loop++) {
+	for( ; total < length; total += written) {
 		written = 0;
 		rc = netconn_write_partly(ownPcb, data + total, length - total, flag, &written);
 
@@ -193,26 +181,28 @@ size_t Connection::Write(const uint8_t *data, size_t length, bool doPush, bool c
 		// We failed to write the data. See above for possible mitigations. For now we just terminate the connection.
 		debugPrintfAlways("Write fail len=%u err=%d\n", total, (int)rc);
 		Terminate(false);		// chrishamm: Not sure if this helps with LwIP v1.4.3 but it is mandatory for proper error handling with LwIP 2.0.3
-	} else {
-		// Close the connection again when we're done
-		if (closeAfterSending)
-		{
-			closeTimer = millis();
-			SetState(ConnState::closePending);
-		}
+		return 0;
 	}
 
-	return total;
+	// Close the connection again when we're done
+	if (closeAfterSending)
+	{
+		closeTimer = millis();
+		SetState(ConnState::closePending);
+	}
+
+	return length;
 }
 
-size_t Connection::CanWrite() const
+size_t IRAM_ATTR Connection::CanWrite() const
 {
 	// Return the amount of free space in the write buffer
 	// Note: we cannot necessarily write this amount, because it depends on memory allocations being successful.
-	return ((state == ConnState::connected) && ownPcb->pcb.tcp) ? tcp_sndbuf(ownPcb->pcb.tcp) : 0;
+	return ((state == ConnState::connected) && ownPcb->pcb.tcp) ?
+		std::min((size_t)tcp_sndbuf(ownPcb->pcb.tcp), MaxDataLength) : 0;
 }
 
-size_t Connection::Read(uint8_t *data, size_t length)
+size_t IRAM_ATTR Connection::Read(uint8_t *data, size_t length)
 {
 	size_t lengthRead = 0;
 	if (pb != nullptr && length != 0 && (state == ConnState::connected || state == ConnState::otherEndClosed))
@@ -245,11 +235,10 @@ size_t Connection::Read(uint8_t *data, size_t length)
 	return lengthRead;
 }
 
-size_t Connection::CanRead() const
+size_t IRAM_ATTR Connection::CanRead() const
 {
 	return ((state == ConnState::connected || state == ConnState::otherEndClosed) && pb != nullptr)
-			? pb->tot_len - readIndex
-				: 0;
+			? pb->tot_len - readIndex : 0;
 }
 
 void Connection::Report()
@@ -284,6 +273,7 @@ int Connection::Accept(struct netconn *pcb)
 	remotePort = pcb->pcb.tcp->remote_port;
 	remoteIp = pcb->pcb.tcp->remote_ip.u_addr.ip4.addr;
 	readIndex = alreadyRead = 0;
+	netconn_set_sendtimeout(ownPcb, MaxWriteTime);
 	closeTimer = 0;
 	SetState(ConnState::connected);
 
@@ -300,6 +290,15 @@ void Connection::FreePbuf()
 }
 
 // Static functions
+
+
+/*static*/ void IRAM_ATTR Connection::PollAll()
+{
+	for(int i = 0; i < MaxConnections; i++) {
+		connectionList[i]->Poll();
+	}
+}
+
 /*static*/ Connection *Connection::Allocate()
 {
 	for (size_t i = 0; i < MaxConnections; ++i)
@@ -335,16 +334,6 @@ void Connection::FreePbuf()
 		}
 	}
 	return count;
-}
-
-/*static*/ void Connection::PollOne()
-{
-	Connection::Get(nextConnectionToPoll).Poll();
-	++nextConnectionToPoll;
-	if (nextConnectionToPoll == MaxConnections)
-	{
-		nextConnectionToPoll = 0;
-	}
 }
 
 /*static*/ void Connection::TerminateAll()
@@ -385,6 +374,5 @@ void Connection::FreePbuf()
 
 // Static data
 Connection *Connection::connectionList[MaxConnections] = { 0 };
-size_t Connection::nextConnectionToPoll = 0;
 
 // End
