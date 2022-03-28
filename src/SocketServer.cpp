@@ -265,7 +265,7 @@ pre(currentState == NetworkState::idle)
 		std::min(sizeof(wifi_config.sta.ssid), sizeof(apData.ssid)));
 	SafeStrncpy((char*)wifi_config.sta.password, (char*)apData.password,
 		std::min(sizeof(wifi_config.sta.password), sizeof(apData.password)));
-	esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config);
+	esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
 
 	tcpip_adapter_dhcpc_stop(TCPIP_ADAPTER_IF_STA);
 
@@ -307,7 +307,7 @@ void ConnectPoll(void* data)
 	led_indicator_start(led, ONBOARD_LED_IDLE);
 
 	TimerHandle_t connExpTmr = xTimerCreate("connExpTmr", MaxConnectTime, pdFALSE, NULL,
-		[](void* data) {
+		[](TimerHandle_t data) {
 			xTaskNotify(connPollTaskHdl, STATION_CONNECT_TIMEOUT, eSetBits);
 		});
 
@@ -485,7 +485,7 @@ pre(currentState == WiFiState::idle)
 
 	esp_wifi_restore();
 	esp_wifi_set_mode(WIFI_MODE_STA);
-	esp_wifi_set_protocol(ESP_IF_WIFI_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+	esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
 #if NO_WIFI_SLEEP
 	esp_wifi_set_ps(WIFI_PS_NONE);
 #else
@@ -641,7 +641,7 @@ void StartAccessPoint()
 			wifi_config.ap.channel = (apData.channel == 0) ? DefaultWiFiChannel : apData.channel;
 			wifi_config.ap.max_connection = 4;
 
-			res = esp_wifi_set_config(ESP_IF_WIFI_AP, &wifi_config);
+			res = esp_wifi_set_config(WIFI_IF_AP, &wifi_config);
 
 			if (res == ESP_OK)
 			{
@@ -824,7 +824,9 @@ void IRAM_ATTR ProcessRequest()
 					response->resetReason = 3; // Software watchdog
 					break;
 				case ESP_RST_SW:
+#if ESP8266
 				case ESP_RST_FAST_SW:
+#endif
 					response->resetReason = 4; // Software-initiated reset
 					break;
 				case ESP_RST_DEEPSLEEP:
@@ -887,7 +889,7 @@ void IRAM_ATTR ProcessRequest()
 				}
 
 				uint8_t phyMode;
-				esp_wifi_get_protocol(ESP_IF_WIFI_STA, &phyMode);
+				esp_wifi_get_protocol(WIFI_IF_STA, &phyMode);
 
 
 				if (phyMode | WIFI_PROTOCOL_11N) {
@@ -900,13 +902,21 @@ void IRAM_ATTR ProcessRequest()
 
 				response->zero1 = 0;
 				response->zero2 = 0;
+#if ESP8266
 				response->vcc = esp_wifi_get_vdd33();
+#elif ESP32C3
+				response->vcc = 0;
+#endif
 				WirelessConfigurationData wp;
 				GetSsidDataByIndex(currentSsid, wp);
 				SafeStrncpy(response->versionText, firmwareVersion, sizeof(response->versionText));
 				SafeStrncpy(response->hostName, webHostName, sizeof(response->hostName));
 				SafeStrncpy(response->ssid, wp.ssid, sizeof(response->ssid));
+#if ESP8266
 				response->clockReg = REG(SPI_CLOCK(HSPI));
+#elif ESP32C3
+				response->clockReg = 0;
+#endif
 				SendResponse(sizeof(NetworkStatusResponse));
 			}
 			break;
@@ -1384,7 +1394,7 @@ void setup()
 	gpio_set_intr_type(SamTfrReadyPin, GPIO_INTR_POSEDGE);
 
 	tfrReqExpTmr = xTimerCreate("tfrReqExpTmr", StatusReportMillis, pdFALSE, NULL,
-		[](void* data) {
+		[](TimerHandle_t data) {
 			xTaskNotify(mainTaskHdl, TFR_REQUEST_TIMEOUT, eSetBits);
 		});
 	xTimerStart(tfrReqExpTmr, portMAX_DELAY);

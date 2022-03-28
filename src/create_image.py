@@ -18,7 +18,10 @@ bins = []
 if args.build_system == "cmake":
     with open(os.path.join(args.build_dir, "flasher_args.json"), "r") as flasher_args:
         contents = json.load(flasher_args)
-        partition_table = contents["partition_table"]
+        try:
+            partition_table = contents["partition_table"]
+        except KeyError:
+            partition_table = contents["partition-table"]
         app = contents["app"]
         bootloader = contents["bootloader"]
         bins.extend([partition_table, app, bootloader])

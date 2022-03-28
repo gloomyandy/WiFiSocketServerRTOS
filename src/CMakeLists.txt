@@ -24,3 +24,7 @@ idf_build_get_property(build_dir BUILD_DIR)
 add_custom_target(image ALL DEPENDS app bootloader ${ssid_init}
      COMMAND ${python} "${CMAKE_CURRENT_LIST_DIR}/create_image.py"
                     "cmake" "${build_dir}" "${build_dir}/DuetWiFiServer.bin")
+
+if(IDF_TARGET STREQUAL "esp8266")
+     target_compile_definitions(${COMPONENT_LIB} PRIVATE "ESP8266")
+endif()
