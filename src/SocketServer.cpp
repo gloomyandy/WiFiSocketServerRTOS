@@ -47,9 +47,14 @@ extern "C"
 #include "Connection.h"
 #include "Listener.h"
 #include "Misc.h"
+#include "Config.h"
 
+#if ESP8266
 #include "esp8266/spi.h"
 #include "esp8266/gpio.h"
+#else
+#include "esp32c3/spi.h"
+#endif
 
 const uint32_t MaxConnectTime = 40 * 1000;			// how long we wait for WiFi to connect in milliseconds
 const uint32_t TransferReadyTimeout = 10;			// how many milliseconds we allow for the Duet to set

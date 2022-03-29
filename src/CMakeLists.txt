@@ -3,14 +3,16 @@ set(CMAKE_CXX_STANDARD 17)
 set(srcs "Misc.cpp"
          "Listener.cpp"
          "SocketServer.cpp"
-         "HSPI.cpp"
          "Connection.cpp"
          "DNSServer.cpp")
 set(include_dirs ".")
 
 if(IDF_TARGET STREQUAL "esp8266")
-     list(APPEND srcs "esp8266/gpio.c")
+     list(APPEND srcs "esp8266/gpio.c" "esp8266/HSPI.cpp")
      list(APPEND include_dirs "esp8266")
+elseif(IDF_TARGET STREQUAL "esp32c3")
+     list(APPEND srcs "esp32c3/HSPI.cpp")
+     list(APPEND include_dirs "esp32c3")
 endif()
 
 idf_component_register(SRCS "${srcs}"
@@ -27,4 +29,6 @@ add_custom_target(image ALL DEPENDS app bootloader ${ssid_init}
 
 if(IDF_TARGET STREQUAL "esp8266")
      target_compile_definitions(${COMPONENT_LIB} PRIVATE "ESP8266")
+elseif(IDF_TARGET STREQUAL "esp32c3")
+     target_compile_definitions(${COMPONENT_LIB} PRIVATE "ESP32C3")
 endif()

@@ -1,9 +1,7 @@
 #pragma once
 
 #include "driver/gpio.h"
-#if ESP8266
 #include "esp8266/spi_register.h"
-#endif
 
 static const gpio_num_t SCK = GPIO_NUM_14;
 static const gpio_num_t MOSI = GPIO_NUM_13;
