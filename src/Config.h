@@ -44,10 +44,17 @@ const uint32_t defaultClockControl = 80000000/3;
 #endif
 
 // Pin numbers
+#if ESP8266
 const gpio_num_t SamSSPin = GPIO_NUM_15;			// GPIO15, output to SAM, SS pin for SPI transfer
 const gpio_num_t EspReqTransferPin = GPIO_NUM_0;	// GPIO0, output, indicates to the SAM that we want to send something
 const gpio_num_t SamTfrReadyPin = GPIO_NUM_4;		// GPIO4, input, indicates that SAM is ready to execute an SPI transaction
 const gpio_num_t OnboardLedPin = GPIO_NUM_2;		// GPIO 2
+#elif ESP32C3
+const gpio_num_t SamSSPin = GPIO_NUM_7;				// GPIO15, output to SAM, SS pin for SPI transfer
+const gpio_num_t EspReqTransferPin = GPIO_NUM_9;	// GPIO0, output, indicates to the SAM that we want to send something
+const gpio_num_t SamTfrReadyPin = GPIO_NUM_10;		// GPIO4, input, indicates that SAM is ready to execute an SPI transaction
+const gpio_num_t OnboardLedPin = GPIO_NUM_8;		// GPIO 2
+#endif
 
 const uint8_t Backlog = 8;
 
