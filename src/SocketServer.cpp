@@ -266,6 +266,7 @@ void ConnectToAccessPoint(const WirelessConfigurationData& apData)
 pre(currentState == NetworkState::idle)
 {
 	wifi_config_t wifi_config;
+	memset(&wifi_config, 0, sizeof(wifi_config));
 	SafeStrncpy((char*)wifi_config.sta.ssid, (char*)apData.ssid,
 		std::min(sizeof(wifi_config.sta.ssid), sizeof(apData.ssid)));
 	SafeStrncpy((char*)wifi_config.sta.password, (char*)apData.password,
@@ -502,6 +503,7 @@ pre(currentState == WiFiState::idle)
 		esp_wifi_start();
 
 		wifi_scan_config_t cfg;
+		memset(&cfg, 0, sizeof(cfg));
 		cfg.ssid = NULL;
 		cfg.bssid = NULL;
 		cfg.show_hidden = true;
@@ -638,6 +640,7 @@ void StartAccessPoint()
 		if (res == ESP_OK)
 		{
 			wifi_config_t wifi_config;
+			memset(&wifi_config, 0, sizeof(wifi_config));
 			SafeStrncpy((char*)wifi_config.sta.ssid, apData.ssid,
 				std::min(sizeof(wifi_config.sta.ssid), sizeof(apData.ssid)));
 			SafeStrncpy((char*)wifi_config.sta.password, (char*)apData.password,
@@ -855,6 +858,7 @@ void IRAM_ATTR ProcessRequest()
 				if (runningAsStation) {
 					wifi_ap_record_t ap_info;
 					esp_wifi_sta_get_ap_info(&ap_info);
+					memset(&ap_info, 0, sizeof(ap_info));
 					response->rssi = ap_info.rssi;
 					response->numClients = 0;
 					esp_wifi_get_mac(WIFI_IF_STA, response->macAddress);
@@ -863,6 +867,7 @@ void IRAM_ATTR ProcessRequest()
 					response->ipAddress = ip_info.ip.addr;
 				} else if (runningAsAp) {
 					wifi_sta_list_t sta_list;
+					memset(&sta_list, 0, sizeof(sta_list));
 					esp_wifi_ap_get_sta_list(&sta_list);
 
 					response->numClients = sta_list.num;
@@ -893,7 +898,7 @@ void IRAM_ATTR ProcessRequest()
 					break;
 				}
 
-				uint8_t phyMode;
+				uint8_t phyMode = 0;
 				esp_wifi_get_protocol(WIFI_IF_STA, &phyMode);
 
 
