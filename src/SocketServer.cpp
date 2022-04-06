@@ -66,14 +66,14 @@ const uint32_t StatusReportMillis = 200;
 const int DefaultWiFiChannel = 6;
 
 // Global data
-static int currentSsid = -1;
+static volatile int currentSsid = -1;
 char webHostName[HostNameLength + 1] = "Duet-WiFi";
 
 DNSServer dns;
 
-static const char* lastError = nullptr;
-static const char* prevLastError = nullptr;
-static WiFiState currentState = WiFiState::idle,
+static volatile const char* lastError = nullptr;
+static volatile const char* prevLastError = nullptr;
+static volatile WiFiState currentState = WiFiState::idle,
 				lastReportedState = WiFiState::disabled;
 
 static HSPIClass hspi;
@@ -1079,10 +1079,10 @@ void IRAM_ATTR ProcessRequest()
 			}
 			else
 			{
-				const size_t len = strlen(lastError) + 1;
+				const size_t len = strlen((const char*)lastError) + 1;
 				if (dataBufferAvailable >= len)
 				{
-					strcpy(reinterpret_cast<char*>(transferBuffer), lastError);		// copy to 32-bit aligned buffer
+					strcpy(reinterpret_cast<char*>(transferBuffer), (const char*)lastError);		// copy to 32-bit aligned buffer
 					SendResponse(len);
 				}
 				else
