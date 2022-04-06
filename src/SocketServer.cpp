@@ -925,7 +925,7 @@ void IRAM_ATTR ProcessRequest()
 #if ESP8266
 				response->clockReg = REG(SPI_CLOCK(HSPI));
 #elif ESP32C3
-				response->clockReg = 0;
+				response->clockReg = SPI_LL_GET_HW(HSPI)->clock.val;
 #endif
 				SendResponse(sizeof(NetworkStatusResponse));
 			}
