@@ -3,4 +3,4 @@
 nvs,       data, nvs,     0x9000,   0x6000,
 phy_init,  data, phy,     0xf000,   0x1000,
 factory,   app,  factory, 0x10000,  0xff000,
-ssids,     data, nvs,     0x1f5000, 0x6000,
+ssids,     data, nvs,     0x3f7000, 0x7000,
