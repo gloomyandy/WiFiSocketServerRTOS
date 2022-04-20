@@ -4,9 +4,11 @@ Firmware for ESP8266 Wi-Fi modules on Duet boards.
 
 ## Build
 
-Building the project generates `DuetWiFiServer.bin` used for [`M997 S1`](https://duet3d.dozuki.com/Wiki/M997).
+Building the project generates `DuetWiFiServer.bin` used for [`M997 S1`](https://duet3d.dozuki.com/Wiki/M997). DuetWiFiSocketServer supports both ESP8266 and ESP32C3.
 
-### Terminal (Linux/macOS)
+### ESP8266
+
+#### **Terminal (Linux/macOS)**
 
 1. Install the prequisites for your OS. [Linux](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/linux-setup.html#install-prerequisites) [macOS](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/macos-setup.html#install-prerequisites)
 2. [Get](https://docs.espressif.com/projects/esp8266-rtos-sdk/en/latest/get-started/index) ESP8266 RTOS SDK. Checkout branch `release/v3.4`.
@@ -37,7 +39,7 @@ or
 user@pc:/path/to/DuetWiFiSocketServer$ make
 ```
 
-### Terminal (Windows)
+#### **Terminal (Windows)**
 
 1. Get the [pre-packaged environment (based on MSYS) and toolchain](https://docs.espressif.com/projects/esp8266-rtos-sdk/en/latest/get-started/windows-setup.html). Extract both to a directory on your system (recommend `C:\` for the MSYS environment, and `C:\msys32\opt` for the toolchain). Open a [MSYS MINGW32 window](https://docs.espressif.com/projects/esp8266-rtos-sdk/en/latest/get-started/windows-setup.html#check-it-out), as this will be used for the rest of the instructions.
 
@@ -62,11 +64,28 @@ $ make
 ```
 
 
-### Eclipse
+#### **Eclipse**
 
 Instructions for setting up building with Eclipse can be found [here](https://docs.espressif.com/projects/esp8266-rtos-sdk/en/latest/get-started/eclipse-setup.html) for Linux/macOS and [here](https://docs.espressif.com/projects/esp8266-rtos-sdk/en/latest/get-started/eclipse-setup-windows.html#eclipse-windows-setup) for Windows.
 
 Import this project in the `Import New Project` step.
+
+### ESP32C3
+
+#### **Terminal (Windows/macOS/Linux)**
+
+1. Setup ESP-IDF according to your platform. Currently `release/v4.4` is used. [Linux/macOS](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/linux-macos-setup.html) [Windows](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/windows-setup.html). 
+
+2. Navigate to the DuetWiFiSocketServer directory and execute the following commands.  Once the build finishes, `DuetWiFiServer.bin`  will be in the `build` directory.
+
+    ```console
+    user@pc:/path/to/DuetWiFiSocketServer$ idf.py set-target esp32c3
+    user@pc:/path/to/DuetWiFiSocketServer$ idf.py build
+    ```
+
+#### **IDE (Windows/macOS/Linux)**
+
+Eclipse and VSCode are supported through plugins. Read more about the plugin setup and build process [on the docs page](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/index.html#ide).
 
 ## Links
 
