@@ -1,4 +1,4 @@
-# DuetWiFiSocketServer
+# WiFiSocketServerRTOS
 
 Firmware for ESP8266 Wi-Fi modules on Duet boards.
 
@@ -24,17 +24,17 @@ user@pc:/path/to/ESP8266_RTOS_SDK$ ./install.sh
 user@pc:/path/to/ESP8266_RTOS_SDK$ . ./export.sh
 ```
 
-5. Navigate to the DuetWiFiSocketServer directory and execute the build command. Once the build finishes, `DuetWiFiServer.bin`  will be in the `build` directory.
+5. Navigate to the WiFiSocketServerRTOS directory and execute the build command. Once the build finishes, `DuetWiFiServer.bin`  will be in the `build` directory.
 
 
 ```console
-user@pc:/path/to/DuetWiFiSocketServer$ idf.py build
+user@pc:/path/to/WiFiSocketServerRTOS$ idf.py build
 ```
 
 or 
 
 ```console
-user@pc:/path/to/DuetWiFiSocketServer$ make
+user@pc:/path/to/WiFiSocketServerRTOS$ make
 ```
 
 ### Terminal (Windows)
@@ -54,10 +54,10 @@ user@pc MINGW32 ~
 $ export PATH=/opt/xtensa-lx106-elf/bin:$PATH
 ```
 
-4. Navigate to the DuetWiFiSocketServer directory and execute the build command. Once the build finishes, `DuetWiFiServer.bin`  will be in the `build` directory.
+4. Navigate to the WiFiSocketServerRTOS directory and execute the build command. Once the build finishes, `DuetWiFiServer.bin`  will be in the `build` directory.
 
 ```console
-user@pc MINGW32 /path/to/DuetWiFiSocketServer
+user@pc MINGW32 /path/to/WiFiSocketServerRTOS
 $ make
 ```
 
