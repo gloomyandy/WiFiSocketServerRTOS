@@ -4,7 +4,7 @@ Firmware for ESP8266 Wi-Fi modules on Duet boards.
 
 ## Build
 
-Building the project generates `DuetWiFiServer.bin` used for [`M997 S1`](https://duet3d.dozuki.com/Wiki/M997). DuetWiFiSocketServer supports both ESP8266 and ESP32C3.
+Building the project generates `DuetWiFiServer.bin` used for [`M997 S1`](https://duet3d.dozuki.com/Wiki/M997). WiFiSocketServerRTOS supports both ESP8266 and ESP32C3.
 
 ### ESP8266
 
@@ -76,11 +76,11 @@ Import this project in the `Import New Project` step.
 
 1. Setup ESP-IDF according to your platform. Currently `release/v4.4` is used. [Linux/macOS](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/linux-macos-setup.html) [Windows](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/windows-setup.html). 
 
-2. Navigate to the DuetWiFiSocketServer directory and execute the following commands.  Once the build finishes, `DuetWiFiServer.bin`  will be in the `build` directory.
+2. Navigate to the WiFiSocketServerRTOS directory and execute the following commands.  Once the build finishes, `DuetWiFiServer.bin`  will be in the `build` directory.
 
     ```console
-    user@pc:/path/to/DuetWiFiSocketServer$ idf.py set-target esp32c3
-    user@pc:/path/to/DuetWiFiSocketServer$ idf.py build
+    user@pc:/path/to/WiFiSocketServerRTOS$ idf.py set-target esp32c3
+    user@pc:/path/to/WiFiSocketServerRTOS$ idf.py build
     ```
 
 #### **IDE (Windows/macOS/Linux)**
