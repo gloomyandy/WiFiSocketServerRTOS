@@ -60,6 +60,8 @@ enum class NetworkCommand : uint8_t
 	networkFactoryReset,		// delete all SSID/password info and reset factory settings in EEPROM
 	networkSetHostName,			// set the host name
 	networkGetLastError,		// get the result of the last deferred command we sent
+	networkStartScan,           // start a scan for APs the module can connect to
+	networkGetScanResult,       // get the results of the previously started scan
 
 	diagnostics,				// print LwIP stats and possibly more values over the UART line
 	networkRetrieveSsidData,	// retrieve all the SSID data we have except the passwords
@@ -229,7 +231,9 @@ const int32_t ResponseBusy = -8;
 const int32_t ResponseBufferTooSmall = -9;
 const int32_t ResponseBadReplyFormatVersion = -10;
 const int32_t ResponseBadParameter = -11;
-const int32_t ResponseUnknownError = -12;
+const int32_t ResponseNoScanStarted = -12;
+const int32_t ResponseScanInProgress = -13;
+const int32_t ResponseUnknownError = -14;
 
 const size_t MaxRememberedNetworks = 20;
 static_assert((MaxRememberedNetworks + 1) * ReducedWirelessConfigurationDataSize <= MaxDataLength, "Too many remembered networks");

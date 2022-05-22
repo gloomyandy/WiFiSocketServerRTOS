@@ -100,6 +100,12 @@ typedef enum {
 } wifi_evt_t;
 
 typedef enum {
+	WIFI_SCAN_IDLE,
+	WIFI_SCANNING,
+	WIFI_SCAN_DONE
+} wifi_scan_state_t;
+
+typedef enum {
 	PHY_MODE_11B	= 1,
 	PHY_MODE_11G	= 2,
 	PHY_MODE_11N	= 3
@@ -114,6 +120,8 @@ typedef enum {
 typedef enum {
 	WIFI_EVENT_STA_CONNECTING
 } wifi_event_ext_t;
+
+static volatile wifi_scan_state_t scanState = WIFI_SCAN_IDLE;
 
 bool GetSsidDataByIndex(int idx, WirelessConfigurationData& data)
 {
@@ -236,9 +244,23 @@ static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 		wifiEvt = STATION_GOT_IP;
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_START) {
 		wifiEvt = AP_STARTED;
+	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_SCAN_DONE) {
+		scanState = WIFI_SCAN_DONE;
 	}
 
 	xTaskNotify(connPollTaskHdl, wifiEvt, eSetValueWithOverwrite);
+}
+
+static void ConfigureSTAMode()
+{
+	esp_wifi_restore();
+	esp_wifi_set_mode(WIFI_MODE_STA);
+	esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+#if NO_WIFI_SLEEP
+	esp_wifi_set_ps(WIFI_PS_NONE);
+#else
+	esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+#endif
 }
 
 // Rebuild the mDNS services
@@ -496,14 +518,7 @@ pre(currentState == WiFiState::idle)
 
 	WirelessConfigurationData wp;
 
-	esp_wifi_restore();
-	esp_wifi_set_mode(WIFI_MODE_STA);
-	esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
-#if NO_WIFI_SLEEP
-	esp_wifi_set_ps(WIFI_PS_NONE);
-#else
-	esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
-#endif
+	ConfigureSTAMode();
 
 	if (ssid == nullptr || ssid[0] == 0)
 	{
@@ -1101,6 +1116,59 @@ void IRAM_ATTR ProcessRequest()
 			lastReportedState = currentState;
 			break;
 
+		case NetworkCommand::networkStartScan:
+			if ((scanState == WIFI_SCAN_IDLE || scanState == WIFI_SCAN_DONE) &&
+				(currentState == WiFiState::idle || currentState == WiFiState::connected))
+			{
+				wifi_scan_config_t cfg;
+				memset(&cfg, 0, sizeof(cfg));
+				cfg.ssid = NULL;
+				cfg.bssid = NULL;
+				cfg.show_hidden = true;
+
+				// If currently idle, start Wi-Fi in STA mode
+				if (currentState == WiFiState::idle) {
+					ConfigureSTAMode();
+					esp_wifi_start();
+				}
+
+				esp_err_t res = esp_wifi_scan_start(&cfg, false);
+				if (res == ESP_OK) {
+					scanState = WIFI_SCANNING;
+				}
+			} else if (scanState == WIFI_SCANNING && 
+					(currentState == WiFiState::idle || currentState == WiFiState::connected)) {
+				SendResponse(ResponseScanInProgress);
+			} else {
+				SendResponse(ResponseWrongState);
+			}
+			break;
+
+		case NetworkCommand::networkGetScanResult:
+			if (scanState == WIFI_SCAN_DONE) {
+				uint16_t num_ssids = 0;
+				esp_wifi_scan_get_ap_num(&num_ssids);
+				wifi_ap_record_t *ap_records = (wifi_ap_record_t*) calloc(num_ssids, sizeof(wifi_ap_record_t));
+				esp_wifi_scan_get_ap_records(&num_ssids, ap_records);
+
+				for(int i = 0; i < num_ssids; i++) {
+					wifi_ap_record_t ap = ap_records[i];
+					printf("ssid: %s   rssi: %d\n", ap.ssid, ap.rssi);
+				}
+
+				// If Wi-Fi is still idle, stop it
+				if (currentState == WiFiState::idle) {
+					esp_wifi_stop();
+				}
+
+				free(ap_records);
+			} else if (scanState == WIFI_SCANNING) {
+				SendResponse(ResponseScanInProgress);
+			} else if (scanState == WIFI_SCAN_IDLE) {
+				SendResponse(ResponseNoScanStarted);
+			}
+			break;
+
 		case NetworkCommand::networkListen:				// listen for incoming connections
 			if (messageHeaderIn.hdr.dataLength == sizeof(ListenOrConnectData))
 			{
@@ -1354,10 +1422,13 @@ void setup()
 	esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_START, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_STOP, &HandleWiFiEvent, NULL);
+	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_SCAN_DONE, &HandleWiFiEvent, NULL);
 
 	wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
 	cfg.nvs_enable = false;
 	esp_wifi_init(&cfg);
+
+	scanState;
 
 	xTaskCreate(ConnectPoll, "connPoll", CONN_POLL_STACK, NULL, CONN_POLL_PRIO, &connPollTaskHdl);
 
