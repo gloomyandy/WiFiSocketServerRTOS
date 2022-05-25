@@ -86,6 +86,8 @@ static TaskHandle_t mainTaskHdl;
 static TaskHandle_t connPollTaskHdl;
 static TimerHandle_t tfrReqExpTmr;
 
+static const char* WIFI_EVENT_EXT = "wifi_event_ext";
+
 typedef enum {
 	WIFI_IDLE = 0,
 	STATION_CONNECTING,
@@ -108,6 +110,10 @@ typedef enum {
 	TFR_REQUEST_TIMEOUT = 2,
 	SAM_TFR_READY = 4,
 } main_task_evt_t;
+
+typedef enum {
+	WIFI_EVENT_STA_CONNECTING
+} wifi_event_ext_t;
 
 bool GetSsidDataByIndex(int idx, WirelessConfigurationData& data)
 {
@@ -201,7 +207,7 @@ static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 {
 	wifi_evt_t wifiEvt = WIFI_IDLE;
 
-	if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+	if (event_base == WIFI_EVENT_EXT && event_id == WIFI_EVENT_STA_CONNECTING) {
 		wifiEvt = STATION_CONNECTING;
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
 		wifi_event_sta_disconnected_t* disconnected = (wifi_event_sta_disconnected_t*) event_data;
@@ -296,6 +302,7 @@ pre(currentState == NetworkState::idle)
 
 	debugPrintf("Trying to connect to ssid \"%s\" with password \"%s\"\n", apData.ssid, apData.password);
 	esp_wifi_connect();
+	esp_event_post(WIFI_EVENT_EXT, WIFI_EVENT_STA_CONNECTING, NULL, 0, portMAX_DELAY);
 }
 
 
@@ -1341,7 +1348,7 @@ void setup()
 
 	esp_event_loop_create_default();
 
-	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_START, &HandleWiFiEvent, NULL);
+	esp_event_handler_register(WIFI_EVENT_EXT, WIFI_EVENT_STA_CONNECTING, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_STOP, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &HandleWiFiEvent, NULL);
