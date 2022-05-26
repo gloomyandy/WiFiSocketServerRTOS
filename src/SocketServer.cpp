@@ -87,6 +87,8 @@ static TaskHandle_t connPollTaskHdl;
 static TimerHandle_t tfrReqExpTmr;
 
 static const char* WIFI_EVENT_EXT = "wifi_event_ext";
+static wifi_ap_record_t *ap_records = nullptr;
+static uint16_t num_ssids = 0;
 
 typedef enum {
 	WIFI_IDLE = 0,
@@ -105,11 +107,6 @@ typedef enum {
 	WIFI_SCAN_DONE
 } wifi_scan_state_t;
 
-typedef enum {
-	PHY_MODE_11B	= 1,
-	PHY_MODE_11G	= 2,
-	PHY_MODE_11N	= 3
-} phy_mode_t;
 
 typedef enum {
 	TFR_REQUEST = 1,
@@ -245,7 +242,11 @@ static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_START) {
 		wifiEvt = AP_STARTED;
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_SCAN_DONE) {
+		esp_wifi_scan_get_ap_num(&num_ssids);
+		ap_records = (wifi_ap_record_t*) calloc(num_ssids, sizeof(wifi_ap_record_t));
+		esp_wifi_scan_get_ap_records(&num_ssids, ap_records);
 		scanState = WIFI_SCAN_DONE;
+		return; // do not send an event
 	}
 
 	xTaskNotify(connPollTaskHdl, wifiEvt, eSetValueWithOverwrite);
@@ -517,6 +518,7 @@ pre(currentState == WiFiState::idle)
 	mdns_init();
 
 	WirelessConfigurationData wp;
+	esp_wifi_stop();
 
 	ConfigureSTAMode();
 
@@ -526,8 +528,6 @@ pre(currentState == WiFiState::idle)
 
 		wifi_scan_config_t cfg;
 		memset(&cfg, 0, sizeof(cfg));
-		cfg.ssid = NULL;
-		cfg.bssid = NULL;
 		cfg.show_hidden = true;
 
 		esp_err_t res = esp_wifi_scan_start(&cfg, true);
@@ -653,6 +653,7 @@ bool ValidApData(const WirelessConfigurationData &apData)
 
 void StartAccessPoint()
 {
+	esp_wifi_stop();
 	WirelessConfigurationData apData;
 	if (GetSsidDataByIndex(0, apData) && ValidApData(apData))
 	{
@@ -923,13 +924,12 @@ void IRAM_ATTR ProcessRequest()
 				uint8_t phyMode = 0;
 				esp_wifi_get_protocol(WIFI_IF_STA, &phyMode);
 
-
 				if (phyMode | WIFI_PROTOCOL_11N) {
-					response->phyMode = PHY_MODE_11N;
+					response->phyMode = static_cast<int>(PhyMode::N);
 				} else if (phyMode | WIFI_PROTOCOL_11G) {
-					response->phyMode = PHY_MODE_11G;
+					response->phyMode = static_cast<int>(PhyMode::G);
 				} else if (phyMode | WIFI_PROTOCOL_11B) {
-					response->phyMode = PHY_MODE_11B;
+					response->phyMode = static_cast<int>(PhyMode::B);
 				}
 
 				response->zero1 = 0;
@@ -1122,8 +1122,6 @@ void IRAM_ATTR ProcessRequest()
 			{
 				wifi_scan_config_t cfg;
 				memset(&cfg, 0, sizeof(cfg));
-				cfg.ssid = NULL;
-				cfg.bssid = NULL;
 				cfg.show_hidden = true;
 
 				// If currently idle, start Wi-Fi in STA mode
@@ -1133,10 +1131,14 @@ void IRAM_ATTR ProcessRequest()
 				}
 
 				esp_err_t res = esp_wifi_scan_start(&cfg, false);
+
 				if (res == ESP_OK) {
 					scanState = WIFI_SCANNING;
+					SendResponse(ResponseEmpty);
+				} else {
+					SendResponse(ResponseUnknownError);
 				}
-			} else if (scanState == WIFI_SCANNING && 
+			} else if (scanState == WIFI_SCANNING &&
 					(currentState == WiFiState::idle || currentState == WiFiState::connected)) {
 				SendResponse(ResponseScanInProgress);
 			} else {
@@ -1146,22 +1148,84 @@ void IRAM_ATTR ProcessRequest()
 
 		case NetworkCommand::networkGetScanResult:
 			if (scanState == WIFI_SCAN_DONE) {
-				uint16_t num_ssids = 0;
-				esp_wifi_scan_get_ap_num(&num_ssids);
-				wifi_ap_record_t *ap_records = (wifi_ap_record_t*) calloc(num_ssids, sizeof(wifi_ap_record_t));
-				esp_wifi_scan_get_ap_records(&num_ssids, ap_records);
 
-				for(int i = 0; i < num_ssids; i++) {
-					wifi_ap_record_t ap = ap_records[i];
-					printf("ssid: %s   rssi: %d\n", ap.ssid, ap.rssi);
+				if (num_ssids > 0) {
+					size_t rec_sz = num_ssids* sizeof(ScanData);
+
+					if (sizeof(transferBuffer) >= rec_sz) {
+						ScanData *data = reinterpret_cast<ScanData*>(transferBuffer);
+						for(int i = 0; i < num_ssids; i++) {
+							ScanData &d = data[i];
+							wifi_ap_record_t ap = ap_records[i];
+							SafeStrncpy((char*)(d.ssid), (char*)ap.ssid,
+								std::min(sizeof(d.ssid), sizeof(ap.ssid)));
+							d.rssi = ap.rssi;
+
+							if (ap.phy_11n) {
+								d.phymode = PhyMode::N;
+							} else if (ap.phy_11g) {
+								d.phymode = PhyMode::G;
+							} else if (ap.phy_11b) {
+								d.phymode = PhyMode::B;
+							}
+
+							switch (ap.authmode)
+							{
+							case WIFI_AUTH_OPEN:
+								d.authmode = WiFiAuthMode::OPEN;
+								break;
+
+							case WIFI_AUTH_WEP:
+								d.authmode = WiFiAuthMode::WEP;
+								break;
+
+							case WIFI_AUTH_WPA_PSK:
+								d.authmode = WiFiAuthMode::WPA_PSK;
+								break;
+
+							case WIFI_AUTH_WPA2_PSK:
+								d.authmode = WiFiAuthMode::WPA2_PSK;
+								break;
+
+							case WIFI_AUTH_WPA_WPA2_PSK:
+								d.authmode = WiFiAuthMode::WPA_WPA2_PSK;
+								break;
+
+							case WIFI_AUTH_WPA2_ENTERPRISE:
+								d.authmode = WiFiAuthMode::WPA2_ENTERPRISE;
+								break;
+
+							case WIFI_AUTH_WPA3_PSK:
+								d.authmode = WiFiAuthMode::WPA3_PSK;
+								break;
+
+							case WIFI_AUTH_WPA2_WPA3_PSK:
+								d.authmode = WiFiAuthMode::WPA2_WPA3_PSK;
+								break;
+
+#if ESP32C3
+							case WIFI_AUTH_WAPI_PSK:
+								d.authmode = WiFiAuthMode::WAPI_PSK;
+								break;
+#endif
+
+							default:
+								d.authmode = WiFiAuthMode::UNKNOWN;
+								break;
+							}
+						}
+						SendResponse(rec_sz);
+					} else {
+						SendResponse(ResponseBufferTooSmall);
+					}
 				}
 
-				// If Wi-Fi is still idle, stop it
 				if (currentState == WiFiState::idle) {
 					esp_wifi_stop();
 				}
 
 				free(ap_records);
+				scanState = WIFI_SCAN_IDLE;
 			} else if (scanState == WIFI_SCANNING) {
 				SendResponse(ResponseScanInProgress);
 			} else if (scanState == WIFI_SCAN_IDLE) {
@@ -1427,8 +1491,6 @@ void setup()
 	wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
 	cfg.nvs_enable = false;
 	esp_wifi_init(&cfg);
-
-	scanState;
 
 	xTaskCreate(ConnectPoll, "connPoll", CONN_POLL_STACK, NULL, CONN_POLL_PRIO, &connPollTaskHdl);
 

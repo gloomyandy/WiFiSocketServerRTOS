@@ -87,6 +87,35 @@ struct MessageHeaderSamToEsp
 	static const uint8_t FlagPush = 0x02;
 };
 
+
+enum class PhyMode {
+	B = 1,
+	G = 2,
+	N = 3,
+};
+
+enum class WiFiAuthMode
+{
+	OPEN = 0,
+	WEP,
+	WPA_PSK,
+	WPA2_PSK,
+	WPA_WPA2_PSK,
+	WPA2_ENTERPRISE,
+	WPA3_PSK,
+	WPA2_WPA3_PSK,
+	WAPI_PSK,
+	UNKNOWN
+};
+
+struct ScanData
+{
+	int8_t rssi;	/* signal strength from -100 to 0 in dB */
+	PhyMode phymode;
+	WiFiAuthMode authmode;
+	char ssid[SsidLength + 1];
+};
+
 const size_t headerDwords = NumDwords(sizeof(MessageHeaderSamToEsp));
 
 // Message data sent from SAM to ESP for a connCreate, networkListen or networkStopListening command
