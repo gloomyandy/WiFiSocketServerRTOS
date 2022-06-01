@@ -794,7 +794,7 @@ void IRAM_ATTR ProcessRequest()
 			break;
 
 		case NetworkCommand::networkStartClient:			// connect to an access point
-			if (currentState == WiFiState::idle)
+			if (currentState == WiFiState::idle && scanState != WIFI_SCANNING)
 			{
 				deferCommand = true;
 				messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
@@ -811,7 +811,7 @@ void IRAM_ATTR ProcessRequest()
 			break;
 
 		case NetworkCommand::networkStartAccessPoint:		// run as an access point
-			if (currentState == WiFiState::idle)
+			if (currentState == WiFiState::idle && scanState != WIFI_SCANNING)
 			{
 				deferCommand = true;
 				messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
