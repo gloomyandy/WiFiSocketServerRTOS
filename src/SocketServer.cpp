@@ -1116,24 +1116,10 @@ void IRAM_ATTR ProcessRequest()
 			if ((scanState == WIFI_SCAN_IDLE || scanState == WIFI_SCAN_DONE) &&
 				(currentState == WiFiState::idle || currentState == WiFiState::connected))
 			{
-				wifi_scan_config_t cfg;
-				memset(&cfg, 0, sizeof(cfg));
-				cfg.show_hidden = true;
-
-				// If currently idle, start Wi-Fi in STA mode
-				if (currentState == WiFiState::idle) {
-					ConfigureSTAMode();
-					esp_wifi_start();
-				}
-
-				esp_err_t res = esp_wifi_scan_start(&cfg, false);
-
-				if (res == ESP_OK) {
-					scanState = WIFI_SCANNING;
-					SendResponse(ResponseEmpty);
-				} else {
-					SendResponse(ResponseUnknownError);
-				}
+				// Defer scan execution, as this can take a long time and cause a timeout
+				// on RRF's side.
+				SendResponse(ResponseEmpty);
+				deferCommand = true;
 			} else if (scanState == WIFI_SCANNING &&
 					(currentState == WiFiState::idle || currentState == WiFiState::connected)) {
 				SendResponse(ResponseScanInProgress);
@@ -1435,6 +1421,27 @@ void IRAM_ATTR ProcessRequest()
 
 		case NetworkCommand::networkFactoryReset:			// clear remembered list, reset factory defaults
 			FactoryReset();
+			break;
+
+
+		case NetworkCommand::networkStartScan:
+			wifi_scan_config_t cfg;
+			memset(&cfg, 0, sizeof(cfg));
+			cfg.show_hidden = true;
+
+			// If currently idle, start Wi-Fi in STA mode
+			if (currentState == WiFiState::idle) {
+				ConfigureSTAMode();
+				esp_wifi_start();
+			}
+
+			if (esp_wifi_scan_start(&cfg, false) == ESP_OK) {
+				scanState = WIFI_SCANNING;
+			} else {
+				// Since a response has already been sent, hopefully this
+				// does not happen.
+				lastError = "failed to start scan";
+			}
 			break;
 
 		case NetworkCommand::diagnostics:
