@@ -88,13 +88,13 @@ struct MessageHeaderSamToEsp
 };
 
 
-enum class PhyMode {
+enum class WiFiPhyMode {
 	B = 1,
 	G = 2,
 	N = 3,
 };
 
-enum class WiFiAuthMode
+enum class WiFiAuth
 {
 	OPEN = 0,
 	WEP,
@@ -108,11 +108,12 @@ enum class WiFiAuthMode
 	UNKNOWN
 };
 
-struct ScanData
+
+struct WiFiScanData
 {
 	int8_t rssi;	/* signal strength from -100 to 0 in dB */
-	PhyMode phymode;
-	WiFiAuthMode authmode;
+	WiFiPhyMode phymode;
+	WiFiAuth auth;
 	char ssid[SsidLength + 1];
 };
 
