@@ -11,6 +11,7 @@
 
 #include <cstring>
 #include <algorithm>
+#include <vector>
 
 extern "C"
 {
@@ -87,8 +88,6 @@ static TaskHandle_t connPollTaskHdl;
 static TimerHandle_t tfrReqExpTmr;
 
 static const char* WIFI_EVENT_EXT = "wifi_event_ext";
-static wifi_ap_record_t *ap_records = nullptr;
-static uint16_t num_ssids = 0;
 
 typedef enum {
 	WIFI_IDLE = 0,
@@ -242,9 +241,6 @@ static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_START) {
 		wifiEvt = AP_STARTED;
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_SCAN_DONE) {
-		esp_wifi_scan_get_ap_num(&num_ssids);
-		ap_records = (wifi_ap_record_t*) calloc(num_ssids, sizeof(wifi_ap_record_t));
-		esp_wifi_scan_get_ap_records(&num_ssids, ap_records);
 		scanState = WIFI_SCAN_DONE;
 		return; // do not send an event
 	}
@@ -1148,77 +1144,83 @@ void IRAM_ATTR ProcessRequest()
 
 		case NetworkCommand::networkGetScanResult:
 			if (scanState == WIFI_SCAN_DONE) {
+				wifi_ap_record_t *ap_records = nullptr;
+				uint16_t num_ssids = 0;
+
+				esp_wifi_scan_get_ap_num(&num_ssids);
+				ap_records = (wifi_ap_record_t*) calloc(num_ssids, sizeof(wifi_ap_record_t));
+				esp_wifi_scan_get_ap_records(&num_ssids, ap_records);
+
+				size_t data_sz = 0;
 
 				if (num_ssids > 0) {
-					size_t rec_sz = num_ssids* sizeof(ScanData);
+					// By default the records are sorted by signal strength, so just
+					// send all ap records that fit the transfer buffer.
+					for(int i = 0; i < num_ssids && data_sz <= sizeof(transferBuffer); i++, data_sz += sizeof(ScanData))
+					{
+						const wifi_ap_record_t& ap = ap_records[i];
+						ScanData &d = reinterpret_cast<ScanData*>(transferBuffer)[i];
+						SafeStrncpy((char*)(d.ssid), (char*)ap.ssid,
+							std::min(sizeof(d.ssid), sizeof(ap.ssid)));
+						d.rssi = ap.rssi;
 
-					if (sizeof(transferBuffer) >= rec_sz) {
-						ScanData *data = reinterpret_cast<ScanData*>(transferBuffer);
-						for(int i = 0; i < num_ssids; i++) {
-							ScanData &d = data[i];
-							wifi_ap_record_t ap = ap_records[i];
-							SafeStrncpy((char*)(d.ssid), (char*)ap.ssid,
-								std::min(sizeof(d.ssid), sizeof(ap.ssid)));
-							d.rssi = ap.rssi;
+						if (ap.phy_11n) {
+							d.phymode = PhyMode::N;
+						} else if (ap.phy_11g) {
+							d.phymode = PhyMode::G;
+						} else if (ap.phy_11b) {
+							d.phymode = PhyMode::B;
+						}
 
-							if (ap.phy_11n) {
-								d.phymode = PhyMode::N;
-							} else if (ap.phy_11g) {
-								d.phymode = PhyMode::G;
-							} else if (ap.phy_11b) {
-								d.phymode = PhyMode::B;
-							}
+						switch (ap.authmode)
+						{
+						case WIFI_AUTH_OPEN:
+							d.authmode = WiFiAuthMode::OPEN;
+							break;
 
-							switch (ap.authmode)
-							{
-							case WIFI_AUTH_OPEN:
-								d.authmode = WiFiAuthMode::OPEN;
-								break;
+						case WIFI_AUTH_WEP:
+							d.authmode = WiFiAuthMode::WEP;
+							break;
 
-							case WIFI_AUTH_WEP:
-								d.authmode = WiFiAuthMode::WEP;
-								break;
+						case WIFI_AUTH_WPA_PSK:
+							d.authmode = WiFiAuthMode::WPA_PSK;
+							break;
 
-							case WIFI_AUTH_WPA_PSK:
-								d.authmode = WiFiAuthMode::WPA_PSK;
-								break;
+						case WIFI_AUTH_WPA2_PSK:
+							d.authmode = WiFiAuthMode::WPA2_PSK;
+							break;
 
-							case WIFI_AUTH_WPA2_PSK:
-								d.authmode = WiFiAuthMode::WPA2_PSK;
-								break;
+						case WIFI_AUTH_WPA_WPA2_PSK:
+							d.authmode = WiFiAuthMode::WPA_WPA2_PSK;
+							break;
 
-							case WIFI_AUTH_WPA_WPA2_PSK:
-								d.authmode = WiFiAuthMode::WPA_WPA2_PSK;
-								break;
+						case WIFI_AUTH_WPA2_ENTERPRISE:
+							d.authmode = WiFiAuthMode::WPA2_ENTERPRISE;
+							break;
 
-							case WIFI_AUTH_WPA2_ENTERPRISE:
-								d.authmode = WiFiAuthMode::WPA2_ENTERPRISE;
-								break;
+						case WIFI_AUTH_WPA3_PSK:
+							d.authmode = WiFiAuthMode::WPA3_PSK;
+							break;
 
-							case WIFI_AUTH_WPA3_PSK:
-								d.authmode = WiFiAuthMode::WPA3_PSK;
-								break;
-
-							case WIFI_AUTH_WPA2_WPA3_PSK:
-								d.authmode = WiFiAuthMode::WPA2_WPA3_PSK;
-								break;
+						case WIFI_AUTH_WPA2_WPA3_PSK:
+							d.authmode = WiFiAuthMode::WPA2_WPA3_PSK;
+							break;
 
 #if ESP32C3
-							case WIFI_AUTH_WAPI_PSK:
-								d.authmode = WiFiAuthMode::WAPI_PSK;
-								break;
+						case WIFI_AUTH_WAPI_PSK:
+							d.authmode = WiFiAuthMode::WAPI_PSK;
+							break;
 #endif
 
-							default:
-								d.authmode = WiFiAuthMode::UNKNOWN;
-								break;
-							}
+						default:
+							d.authmode = WiFiAuthMode::UNKNOWN;
+							break;
 						}
-						SendResponse(rec_sz);
-					} else {
-						SendResponse(ResponseBufferTooSmall);
 					}
+
 				}
+
+				SendResponse(data_sz);
 
 				if (currentState == WiFiState::idle) {
 					esp_wifi_stop();
