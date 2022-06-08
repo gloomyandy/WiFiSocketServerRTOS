@@ -118,6 +118,8 @@ typedef enum {
 } wifi_event_ext_t;
 
 static volatile wifi_scan_state_t scanState = WIFI_SCAN_IDLE;
+static wifi_ap_record_t *wifiScanAPs = nullptr;
+static uint16_t wifiScanNum = 0;
 
 bool GetSsidDataByIndex(int idx, WirelessConfigurationData& data)
 {
@@ -241,7 +243,13 @@ static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_START) {
 		wifiEvt = AP_STARTED;
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_SCAN_DONE) {
-		scanState = WIFI_SCAN_DONE;
+		// only respond to scans initiated from networkStartScan, and not from client connect
+		if (scanState == WIFI_SCANNING) {
+			esp_wifi_scan_get_ap_num(&wifiScanNum);
+			wifiScanAPs = (wifi_ap_record_t*) calloc(wifiScanNum, sizeof(wifi_ap_record_t));
+			esp_wifi_scan_get_ap_records(&wifiScanNum, wifiScanAPs);
+			scanState = WIFI_SCAN_DONE;
+		}
 		return; // do not send an event
 	}
 
@@ -1130,21 +1138,14 @@ void IRAM_ATTR ProcessRequest()
 
 		case NetworkCommand::networkGetScanResult:
 			if (scanState == WIFI_SCAN_DONE) {
-				wifi_ap_record_t *ap_records = nullptr;
-				uint16_t num_ssids = 0;
-
-				esp_wifi_scan_get_ap_num(&num_ssids);
-				ap_records = (wifi_ap_record_t*) calloc(num_ssids, sizeof(wifi_ap_record_t));
-				esp_wifi_scan_get_ap_records(&num_ssids, ap_records);
-
 				size_t data_sz = 0;
 
-				if (num_ssids > 0) {
+				if (wifiScanNum > 0) {
 					// By default the records are sorted by signal strength, so just
 					// send all ap records that fit the transfer buffer.
-					for(int i = 0; i < num_ssids && data_sz <= sizeof(transferBuffer); i++, data_sz += sizeof(WiFiScanData))
+					for(int i = 0; i < wifiScanNum && data_sz <= sizeof(transferBuffer); i++, data_sz += sizeof(WiFiScanData))
 					{
-						const wifi_ap_record_t& ap = ap_records[i];
+						const wifi_ap_record_t& ap = wifiScanAPs[i];
 						WiFiScanData &d = reinterpret_cast<WiFiScanData*>(transferBuffer)[i];
 						SafeStrncpy((char*)(d.ssid), (char*)ap.ssid,
 							std::min(sizeof(d.ssid), sizeof(ap.ssid)));
@@ -1212,12 +1213,16 @@ void IRAM_ATTR ProcessRequest()
 					esp_wifi_stop();
 				}
 
-				free(ap_records);
+				free(wifiScanAPs);
+				wifiScanNum = 0;
+				wifiScanAPs = nullptr;
 				scanState = WIFI_SCAN_IDLE;
 			} else if (scanState == WIFI_SCANNING) {
 				SendResponse(ResponseScanInProgress);
 			} else if (scanState == WIFI_SCAN_IDLE) {
 				SendResponse(ResponseNoScanStarted);
+			} else {
+				SendResponse(ResponseUnknownError);
 			}
 			break;
 
@@ -1425,6 +1430,15 @@ void IRAM_ATTR ProcessRequest()
 
 
 		case NetworkCommand::networkStartScan:
+			if (scanState == WIFI_SCAN_DONE)
+			{
+				// Previous results were still not retrieved
+				free(wifiScanAPs);
+				wifiScanNum = 0;
+				wifiScanAPs = nullptr;
+				scanState = WIFI_SCAN_IDLE;
+			}
+
 			wifi_scan_config_t cfg;
 			memset(&cfg, 0, sizeof(cfg));
 			cfg.show_hidden = true;
