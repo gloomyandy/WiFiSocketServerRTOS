@@ -60,6 +60,8 @@ enum class NetworkCommand : uint8_t
 	networkFactoryReset,		// delete all SSID/password info and reset factory settings in EEPROM
 	networkSetHostName,			// set the host name
 	networkGetLastError,		// get the result of the last deferred command we sent
+	networkStartScan,           // start a scan for APs the module can connect to
+	networkGetScanResult,       // get the results of the previously started scan
 
 	diagnostics,				// print LwIP stats and possibly more values over the UART line
 	networkRetrieveSsidData,	// retrieve all the SSID data we have except the passwords
@@ -83,6 +85,36 @@ struct MessageHeaderSamToEsp
 
 	static const uint8_t FlagCloseAfterWrite = 0x01;
 	static const uint8_t FlagPush = 0x02;
+};
+
+
+enum class WiFiPhyMode {
+	B = 1,
+	G = 2,
+	N = 3,
+};
+
+enum class WiFiAuth
+{
+	OPEN = 0,
+	WEP,
+	WPA_PSK,
+	WPA2_PSK,
+	WPA_WPA2_PSK,
+	WPA2_ENTERPRISE,
+	WPA3_PSK,
+	WPA2_WPA3_PSK,
+	WAPI_PSK,
+	UNKNOWN
+};
+
+
+struct WiFiScanData
+{
+	int8_t rssi;	/* signal strength from -100 to 0 in dB */
+	WiFiPhyMode phymode;
+	WiFiAuth auth;
+	char ssid[SsidLength + 1];
 };
 
 const size_t headerDwords = NumDwords(sizeof(MessageHeaderSamToEsp));
@@ -229,7 +261,9 @@ const int32_t ResponseBusy = -8;
 const int32_t ResponseBufferTooSmall = -9;
 const int32_t ResponseBadReplyFormatVersion = -10;
 const int32_t ResponseBadParameter = -11;
-const int32_t ResponseUnknownError = -12;
+const int32_t ResponseNoScanStarted = -12;
+const int32_t ResponseScanInProgress = -13;
+const int32_t ResponseUnknownError = -14;
 
 const size_t MaxRememberedNetworks = 20;
 static_assert((MaxRememberedNetworks + 1) * ReducedWirelessConfigurationDataSize <= MaxDataLength, "Too many remembered networks");

@@ -11,6 +11,7 @@
 
 #include <cstring>
 #include <algorithm>
+#include <vector>
 
 extern "C"
 {
@@ -86,6 +87,8 @@ static TaskHandle_t mainTaskHdl;
 static TaskHandle_t connPollTaskHdl;
 static TimerHandle_t tfrReqExpTmr;
 
+static const char* WIFI_EVENT_EXT = "wifi_event_ext";
+
 typedef enum {
 	WIFI_IDLE = 0,
 	STATION_CONNECTING,
@@ -98,16 +101,25 @@ typedef enum {
 } wifi_evt_t;
 
 typedef enum {
-	PHY_MODE_11B	= 1,
-	PHY_MODE_11G	= 2,
-	PHY_MODE_11N	= 3
-} phy_mode_t;
+	WIFI_SCAN_IDLE,
+	WIFI_SCANNING,
+	WIFI_SCAN_DONE
+} wifi_scan_state_t;
+
 
 typedef enum {
 	TFR_REQUEST = 1,
 	TFR_REQUEST_TIMEOUT = 2,
 	SAM_TFR_READY = 4,
 } main_task_evt_t;
+
+typedef enum {
+	WIFI_EVENT_STA_CONNECTING
+} wifi_event_ext_t;
+
+static volatile wifi_scan_state_t scanState = WIFI_SCAN_IDLE;
+static wifi_ap_record_t *wifiScanAPs = nullptr;
+static uint16_t wifiScanNum = 0;
 
 bool GetSsidDataByIndex(int idx, WirelessConfigurationData& data)
 {
@@ -201,7 +213,7 @@ static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 {
 	wifi_evt_t wifiEvt = WIFI_IDLE;
 
-	if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+	if (event_base == WIFI_EVENT_EXT && event_id == WIFI_EVENT_STA_CONNECTING) {
 		wifiEvt = STATION_CONNECTING;
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
 		wifi_event_sta_disconnected_t* disconnected = (wifi_event_sta_disconnected_t*) event_data;
@@ -230,9 +242,30 @@ static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 		wifiEvt = STATION_GOT_IP;
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_START) {
 		wifiEvt = AP_STARTED;
+	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_SCAN_DONE) {
+		// only respond to scans initiated from networkStartScan, and not from client connect
+		if (scanState == WIFI_SCANNING) {
+			esp_wifi_scan_get_ap_num(&wifiScanNum);
+			wifiScanAPs = (wifi_ap_record_t*) calloc(wifiScanNum, sizeof(wifi_ap_record_t));
+			esp_wifi_scan_get_ap_records(&wifiScanNum, wifiScanAPs);
+			scanState = WIFI_SCAN_DONE;
+		}
+		return; // do not send an event
 	}
 
 	xTaskNotify(connPollTaskHdl, wifiEvt, eSetValueWithOverwrite);
+}
+
+static void ConfigureSTAMode()
+{
+	esp_wifi_restore();
+	esp_wifi_set_mode(WIFI_MODE_STA);
+	esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+#if NO_WIFI_SLEEP
+	esp_wifi_set_ps(WIFI_PS_NONE);
+#else
+	esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+#endif
 }
 
 // Rebuild the mDNS services
@@ -296,6 +329,7 @@ pre(currentState == NetworkState::idle)
 
 	debugPrintf("Trying to connect to ssid \"%s\" with password \"%s\"\n", apData.ssid, apData.password);
 	esp_wifi_connect();
+	esp_event_post(WIFI_EVENT_EXT, WIFI_EVENT_STA_CONNECTING, NULL, 0, portMAX_DELAY);
 }
 
 
@@ -488,15 +522,9 @@ pre(currentState == WiFiState::idle)
 	mdns_init();
 
 	WirelessConfigurationData wp;
+	esp_wifi_stop();
 
-	esp_wifi_restore();
-	esp_wifi_set_mode(WIFI_MODE_STA);
-	esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
-#if NO_WIFI_SLEEP
-	esp_wifi_set_ps(WIFI_PS_NONE);
-#else
-	esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
-#endif
+	ConfigureSTAMode();
 
 	if (ssid == nullptr || ssid[0] == 0)
 	{
@@ -504,8 +532,6 @@ pre(currentState == WiFiState::idle)
 
 		wifi_scan_config_t cfg;
 		memset(&cfg, 0, sizeof(cfg));
-		cfg.ssid = NULL;
-		cfg.bssid = NULL;
 		cfg.show_hidden = true;
 
 		esp_err_t res = esp_wifi_scan_start(&cfg, true);
@@ -631,6 +657,7 @@ bool ValidApData(const WirelessConfigurationData &apData)
 
 void StartAccessPoint()
 {
+	esp_wifi_stop();
 	WirelessConfigurationData apData;
 	if (GetSsidDataByIndex(0, apData) && ValidApData(apData))
 	{
@@ -771,7 +798,7 @@ void IRAM_ATTR ProcessRequest()
 			break;
 
 		case NetworkCommand::networkStartClient:			// connect to an access point
-			if (currentState == WiFiState::idle)
+			if (currentState == WiFiState::idle && scanState != WIFI_SCANNING)
 			{
 				deferCommand = true;
 				messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
@@ -788,7 +815,7 @@ void IRAM_ATTR ProcessRequest()
 			break;
 
 		case NetworkCommand::networkStartAccessPoint:		// run as an access point
-			if (currentState == WiFiState::idle)
+			if (currentState == WiFiState::idle && scanState != WIFI_SCANNING)
 			{
 				deferCommand = true;
 				messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
@@ -898,16 +925,15 @@ void IRAM_ATTR ProcessRequest()
 					break;
 				}
 
-				uint8_t phyMode = 0;
-				esp_wifi_get_protocol(WIFI_IF_STA, &phyMode);
+				uint8_t WiFiPhyMode = 0;
+				esp_wifi_get_protocol(WIFI_IF_STA, &WiFiPhyMode);
 
-
-				if (phyMode | WIFI_PROTOCOL_11N) {
-					response->phyMode = PHY_MODE_11N;
-				} else if (phyMode | WIFI_PROTOCOL_11G) {
-					response->phyMode = PHY_MODE_11G;
-				} else if (phyMode | WIFI_PROTOCOL_11B) {
-					response->phyMode = PHY_MODE_11B;
+				if (WiFiPhyMode | WIFI_PROTOCOL_11N) {
+					response->phyMode = static_cast<int>(WiFiPhyMode::N);
+				} else if (WiFiPhyMode | WIFI_PROTOCOL_11G) {
+					response->phyMode = static_cast<int>(WiFiPhyMode::G);
+				} else if (WiFiPhyMode | WIFI_PROTOCOL_11B) {
+					response->phyMode = static_cast<int>(WiFiPhyMode::B);
 				}
 
 				response->zero1 = 0;
@@ -1092,6 +1118,112 @@ void IRAM_ATTR ProcessRequest()
 				lastError = nullptr;
 			}
 			lastReportedState = currentState;
+			break;
+
+		case NetworkCommand::networkStartScan:
+			if ((scanState == WIFI_SCAN_IDLE || scanState == WIFI_SCAN_DONE) &&
+				(currentState == WiFiState::idle || currentState == WiFiState::connected))
+			{
+				// Defer scan execution, as this can take a long time and cause a timeout
+				// on RRF's side.
+				SendResponse(ResponseEmpty);
+				deferCommand = true;
+			} else if (scanState == WIFI_SCANNING &&
+					(currentState == WiFiState::idle || currentState == WiFiState::connected)) {
+				SendResponse(ResponseScanInProgress);
+			} else {
+				SendResponse(ResponseWrongState);
+			}
+			break;
+
+		case NetworkCommand::networkGetScanResult:
+			if (scanState == WIFI_SCAN_DONE) {
+				size_t data_sz = 0;
+
+				if (wifiScanNum > 0) {
+					// By default the records are sorted by signal strength, so just
+					// send all ap records that fit the transfer buffer.
+					for(int i = 0; i < wifiScanNum && data_sz <= sizeof(transferBuffer); i++, data_sz += sizeof(WiFiScanData))
+					{
+						const wifi_ap_record_t& ap = wifiScanAPs[i];
+						WiFiScanData &d = reinterpret_cast<WiFiScanData*>(transferBuffer)[i];
+						SafeStrncpy((char*)(d.ssid), (char*)ap.ssid,
+							std::min(sizeof(d.ssid), sizeof(ap.ssid)));
+						d.rssi = ap.rssi;
+
+						if (ap.phy_11n) {
+							d.phymode = WiFiPhyMode::N;
+						} else if (ap.phy_11g) {
+							d.phymode = WiFiPhyMode::G;
+						} else if (ap.phy_11b) {
+							d.phymode = WiFiPhyMode::B;
+						}
+
+						switch (ap.authmode)
+						{
+						case WIFI_AUTH_OPEN:
+							d.auth = WiFiAuth::OPEN;
+							break;
+
+						case WIFI_AUTH_WEP:
+							d.auth = WiFiAuth::WEP;
+							break;
+
+						case WIFI_AUTH_WPA_PSK:
+							d.auth = WiFiAuth::WPA_PSK;
+							break;
+
+						case WIFI_AUTH_WPA2_PSK:
+							d.auth = WiFiAuth::WPA2_PSK;
+							break;
+
+						case WIFI_AUTH_WPA_WPA2_PSK:
+							d.auth = WiFiAuth::WPA_WPA2_PSK;
+							break;
+
+						case WIFI_AUTH_WPA2_ENTERPRISE:
+							d.auth = WiFiAuth::WPA2_ENTERPRISE;
+							break;
+
+						case WIFI_AUTH_WPA3_PSK:
+							d.auth = WiFiAuth::WPA3_PSK;
+							break;
+
+						case WIFI_AUTH_WPA2_WPA3_PSK:
+							d.auth = WiFiAuth::WPA2_WPA3_PSK;
+							break;
+
+#if ESP32C3
+						case WIFI_AUTH_WAPI_PSK:
+							d.auth = WiFiAuth::WAPI_PSK;
+							break;
+#endif
+
+						default:
+							d.auth = WiFiAuth::UNKNOWN;
+							break;
+						}
+					}
+
+				}
+
+				SendResponse(data_sz);
+
+				if (currentState == WiFiState::idle) {
+					esp_wifi_stop();
+				}
+
+				free(wifiScanAPs);
+				wifiScanNum = 0;
+				wifiScanAPs = nullptr;
+				scanState = WIFI_SCAN_IDLE;
+			} else if (scanState == WIFI_SCANNING) {
+				SendResponse(ResponseScanInProgress);
+			} else if (scanState == WIFI_SCAN_IDLE) {
+				SendResponse(ResponseNoScanStarted);
+			} else {
+				SendResponse(ResponseUnknownError);
+			}
 			break;
 
 		case NetworkCommand::networkListen:				// listen for incoming connections
@@ -1296,6 +1428,36 @@ void IRAM_ATTR ProcessRequest()
 			FactoryReset();
 			break;
 
+
+		case NetworkCommand::networkStartScan:
+			if (scanState == WIFI_SCAN_DONE)
+			{
+				// Previous results were still not retrieved
+				free(wifiScanAPs);
+				wifiScanNum = 0;
+				wifiScanAPs = nullptr;
+				scanState = WIFI_SCAN_IDLE;
+			}
+
+			wifi_scan_config_t cfg;
+			memset(&cfg, 0, sizeof(cfg));
+			cfg.show_hidden = true;
+
+			// If currently idle, start Wi-Fi in STA mode
+			if (currentState == WiFiState::idle) {
+				ConfigureSTAMode();
+				esp_wifi_start();
+			}
+
+			if (esp_wifi_scan_start(&cfg, false) == ESP_OK) {
+				scanState = WIFI_SCANNING;
+			} else {
+				// Since a response has already been sent, hopefully this
+				// does not happen.
+				lastError = "failed to start scan";
+			}
+			break;
+
 		case NetworkCommand::diagnostics:
 			Connection::ReportConnections();
 			delay(20);										// give the Duet main processor time to digest that
@@ -1341,12 +1503,13 @@ void setup()
 
 	esp_event_loop_create_default();
 
-	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_START, &HandleWiFiEvent, NULL);
+	esp_event_handler_register(WIFI_EVENT_EXT, WIFI_EVENT_STA_CONNECTING, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_STOP, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_START, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_STOP, &HandleWiFiEvent, NULL);
+	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_SCAN_DONE, &HandleWiFiEvent, NULL);
 
 	wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
 	cfg.nvs_enable = false;
