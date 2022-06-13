@@ -31,7 +31,7 @@ user@pc:/path/to/ESP8266_RTOS_SDK$ ./install.sh
 user@pc:/path/to/ESP8266_RTOS_SDK$ . ./export.sh
 ```
 
-5. Navigate to this directory and execute the `make` command. Once the build finishes, `DuetWiFiServer.bin`  will be in the `build` directory.
+5. Navigate to this directory and execute the `make` command. Exit and save the configuration when prompted. Once the build finishes, `DuetWiFiServer.bin`  will be in the `build` directory.
 
 
 ```console
@@ -49,7 +49,7 @@ user@pc /path/to
 $ git clone --branch release/v3.4 --recursive https://github.com/espressif/ESP8266_RTOS_SDK.git
 ```
 
-3. Open a MINGW32 terminal (located at `C:\msys32\mingw32.exe` if the pre-packaged MSYS environment was extracted to `C:\` as recommended). 
+3. Open a MINGW32 terminal (located at `C:\msys32\mingw32.exe` if the pre-packaged MSYS environment was extracted to `C:\` as recommended).
 
 4. Using the MINGW32 terminal,
 
@@ -63,10 +63,14 @@ $ git clone --branch release/v3.4 --recursive https://github.com/espressif/ESP82
     $ export PATH="/opt/xtensa-lx106-elf/bin":$PATH
     ```
 
-    - [Install the Python pre-requisites](https://docs.espressif.com/projects/esp8266-rtos-sdk/en/latest/get-started/index.html#install-the-required-python-packages).
+    - Install the Python pre-requisites.
 
+    ```
+    user@pc MINGW32 ~
+    python -m pip install --user -r $IDF_PATH/requirements.txt
+    ```
 
-4. Navigate to this directory and execute the `make` command. Once the build finishes, `DuetWiFiServer.bin`  will be in the `build` directory.
+4. Navigate to this directory and execute the `make` command. Exit and save the configuration when prompted. Once the build finishes, `DuetWiFiServer.bin`  will be in the `build` directory.
 
 ```console
 user@pc MINGW32 /path/to/WiFiSocketServerRTOS
