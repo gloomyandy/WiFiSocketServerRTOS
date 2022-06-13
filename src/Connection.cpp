@@ -13,8 +13,8 @@
 #include "Misc.h"				// for millis
 #include "Config.h"
 
-const uint32_t MaxWriteTime = 2000;		// how long we wait for a write operation to complete before it is cancelled
-const uint32_t MaxAckTime = 4000;		// how long we wait for a connection to acknowledge the remaining data before it is closed
+static const uint32_t MaxWriteTime = 2000;		// how long we wait for a write operation to complete before it is cancelled
+static const uint32_t MaxAckTime = 4000;		// how long we wait for a connection to acknowledge the remaining data before it is closed
 
 // Public interface
 Connection::Connection(uint8_t num)

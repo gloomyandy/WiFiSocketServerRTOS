@@ -11,7 +11,6 @@
 
 #include <cstring>
 #include <algorithm>
-#include <vector>
 
 extern "C"
 {
@@ -57,20 +56,22 @@ extern "C"
 #include "esp32c3/spi.h"
 #endif
 
-const uint32_t MaxConnectTime = 40 * 1000;			// how long we wait for WiFi to connect in milliseconds
-const uint32_t TransferReadyTimeout = 10;			// how many milliseconds we allow for the Duet to set
+static const uint32_t MaxConnectTime = 40 * 1000;			// how long we wait for WiFi to connect in milliseconds
+static const uint32_t TransferReadyTimeout = 10;			// how many milliseconds we allow for the Duet to set
 													// TransferReady low after the end of a transaction,
 													// before we assume that we missed seeing it
 #define array _ecv_array
 
-const uint32_t StatusReportMillis = 200;
-const int DefaultWiFiChannel = 6;
+static const uint32_t StatusReportMillis = 200;
+static const int DefaultWiFiChannel = 6;
+
+static const int MaxAPConnections = 4;
 
 // Global data
 static volatile int currentSsid = -1;
-char webHostName[HostNameLength + 1] = "Duet-WiFi";
+static char webHostName[HostNameLength + 1] = "Duet-WiFi";
 
-DNSServer dns;
+static DNSServer dns;
 
 static volatile const char* lastError = nullptr;
 static volatile const char* prevLastError = nullptr;
@@ -674,7 +675,7 @@ void StartAccessPoint()
 				std::min(sizeof(wifi_config.sta.password), sizeof(apData.password)));
 			wifi_config.ap.authmode = WIFI_AUTH_WPA_WPA2_PSK;
 			wifi_config.ap.channel = (apData.channel == 0) ? DefaultWiFiChannel : apData.channel;
-			wifi_config.ap.max_connection = 4;
+			wifi_config.ap.max_connection = MaxAPConnections;
 
 			res = esp_wifi_set_config(WIFI_IF_AP, &wifi_config);
 
