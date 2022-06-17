@@ -296,39 +296,8 @@ void RemoveMdnsServices()
 }
 
 // Try to connect using the specified SSID and password
-void ConnectToAccessPoint(const WirelessConfigurationData& apData)
-pre(currentState == NetworkState::idle)
+void ConnectToAccessPoint()
 {
-	wifi_config_t wifi_config;
-	memset(&wifi_config, 0, sizeof(wifi_config));
-	SafeStrncpy((char*)wifi_config.sta.ssid, (char*)apData.ssid,
-		std::min(sizeof(wifi_config.sta.ssid), sizeof(apData.ssid)));
-	SafeStrncpy((char*)wifi_config.sta.password, (char*)apData.password,
-		std::min(sizeof(wifi_config.sta.password), sizeof(apData.password)));
-	esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
-
-	tcpip_adapter_dhcpc_stop(TCPIP_ADAPTER_IF_STA);
-
-	// On Arduino core, gateway and subnet is ignored
-	// if IP address is not specified.
-	if (apData.ip) {
-		tcpip_adapter_ip_info_t ip_info;
-		ip_info.ip.addr = apData.ip;
-		ip_info.gw.addr = apData.gateway;
-
-		if(!apData.netmask) {
-			IP4_ADDR(&ip_info.netmask, 255,255,255,0); // default to 255.255.255.0
-		} else {
-			ip_info.netmask.addr = apData.netmask;
-		}
-		tcpip_adapter_set_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info);
-	} else {
-		tcpip_adapter_dhcpc_start(TCPIP_ADAPTER_IF_STA);
-	}
-
-	tcpip_adapter_set_hostname(TCPIP_ADAPTER_IF_STA, webHostName);
-
-	debugPrintf("Trying to connect to ssid \"%s\" with password \"%s\"\n", apData.ssid, apData.password);
 	esp_wifi_connect();
 	esp_event_post(WIFI_EVENT_EXT, WIFI_EVENT_STA_CONNECTING, NULL, 0, portMAX_DELAY);
 }
@@ -485,7 +454,8 @@ void ConnectPoll(void* data)
 			WirelessConfigurationData wp;
 			GetSsidDataByIndex(currentSsid, wp);
 			currentState = WiFiState::reconnecting;
-			ConnectToAccessPoint(wp);
+			debugPrintf("Trying to reconnect to ssid \"%s\" with password \"%s\"\n", wp.ssid, wp.password);
+			ConnectToAccessPoint();
 		}
 
 		if (currentState != prevCurrentState) {
@@ -536,10 +506,10 @@ pre(currentState == WiFiState::idle)
 		cfg.show_hidden = true;
 
 		esp_err_t res = esp_wifi_scan_start(&cfg, true);
+		esp_wifi_stop();
 
 		if (res != ESP_OK) {
 			lastError = "network scan failed";
-			esp_wifi_stop();
 			return;
 		}
 
@@ -577,7 +547,6 @@ pre(currentState == WiFiState::idle)
 		if (strongestNetwork < 0)
 		{
 			lastError = "no known networks found";
-			esp_wifi_stop();
 			return;
 		}
 
@@ -592,12 +561,43 @@ pre(currentState == WiFiState::idle)
 			return;
 		}
 
-		esp_wifi_start();
 		currentSsid = idx;
 	}
 
+	wifi_config_t wifi_config;
+	memset(&wifi_config, 0, sizeof(wifi_config));
+	SafeStrncpy((char*)wifi_config.sta.ssid, (char*)wp.ssid,
+		std::min(sizeof(wifi_config.sta.ssid), sizeof(wp.ssid)));
+	SafeStrncpy((char*)wifi_config.sta.password, (char*)wp.password,
+		std::min(sizeof(wifi_config.sta.password), sizeof(wp.password)));
+	esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+
+	tcpip_adapter_dhcpc_stop(TCPIP_ADAPTER_IF_STA);
+
+	// On Arduino core, gateway and subnet is ignored
+	// if IP address is not specified.
+	if (wp.ip) {
+		tcpip_adapter_ip_info_t ip_info;
+		ip_info.ip.addr = wp.ip;
+		ip_info.gw.addr = wp.gateway;
+
+		if(!wp.netmask) {
+			IP4_ADDR(&ip_info.netmask, 255,255,255,0); // default to 255.255.255.0
+		} else {
+			ip_info.netmask.addr = wp.netmask;
+		}
+		tcpip_adapter_set_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info);
+	} else {
+		tcpip_adapter_dhcpc_start(TCPIP_ADAPTER_IF_STA);
+	}
+
+	tcpip_adapter_set_hostname(TCPIP_ADAPTER_IF_STA, webHostName);
+
+	esp_wifi_start();
+
 	// ssidData contains the details of the strongest known access point
-	ConnectToAccessPoint(wp);
+	debugPrintf("Trying to connect to ssid \"%s\" with password \"%s\"\n", wp.ssid, wp.password);
+	ConnectToAccessPoint();
 }
 
 bool CheckValidSSID(const char * array s)
