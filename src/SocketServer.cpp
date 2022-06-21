@@ -22,6 +22,7 @@ extern "C"
 #include "freertos/event_groups.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
+#include "esp_wpa2.h"
 #include "esp_system.h"
 #include "esp_attr.h"
 #include "esp_log.h"
@@ -68,6 +69,7 @@ static const int DefaultWiFiChannel = 6;
 static const int MaxAPConnections = 4;
 
 // Global data
+static int addedSsid = -1;
 static volatile int currentSsid = -1;
 static char webHostName[HostNameLength + 1] = "Duet-WiFi";
 
@@ -121,6 +123,74 @@ typedef enum {
 static volatile wifi_scan_state_t scanState = WIFI_SCAN_IDLE;
 static wifi_ap_record_t *wifiScanAPs = nullptr;
 static uint16_t wifiScanNum = 0;
+
+nvs_handle_t OpenCredentialStore(int ssid, bool write)
+{
+	char ssidCredsNs[16] = { 0 };
+	snprintf(ssidCredsNs, sizeof(ssidCredsNs), "cred_%d", ssid);
+
+	nvs_handle_t ssidCreds;
+	nvs_open_from_partition(ssidsNs, ssidCredsNs, write ? NVS_READWRITE : NVS_READONLY, &ssidCreds);
+
+	return ssidCreds;
+}
+
+bool SetCredential(int ssid, int cred, const void* buff, size_t sz)
+{
+	nvs_handle_t creds = OpenCredentialStore(ssid, true);
+	esp_err_t err = nvs_set_blob(creds, std::to_string(cred).c_str(), buff, sz);
+	if (err == ESP_OK) {
+		err = nvs_commit(ssids);
+	}
+	nvs_close(creds);
+
+	return err == ESP_OK;
+}
+
+size_t GetCredential(int ssid, int cred, void* buff, size_t sz)
+{
+	nvs_handle_t creds = OpenCredentialStore(ssid, false);
+	nvs_get_blob(creds, std::to_string(cred).c_str(), buff, &sz);
+	nvs_close(creds);
+	return sz;
+}
+
+size_t LoadCredential(int ssid, int cred, void* buff, size_t maxSize = MaxCredentialChunkSize)
+{
+	size_t total = 0;
+	size_t size = MaxCredentialChunkSize;
+
+	for(int chunk = 0; total < maxSize && size == MaxCredentialChunkSize; chunk++)
+	{
+		int chunkIdx = cred + chunk;
+		if ((size = GetCredential(currentSsid, chunkIdx, nullptr, 0)))
+		{
+			size = GetCredential(currentSsid, chunkIdx, (void*)&(((uint8_t*)buff)[total]), size);
+			total += size;
+		}
+	}
+
+	return total;
+}
+
+bool CheckCredential(int ssid, int cred)
+{
+	return GetCredential(ssid, cred, nullptr, 0) != 0;
+}
+
+void EraseCredential(int ssid, int cred = -1)
+{
+	nvs_handle_t creds = OpenCredentialStore(ssid, true);
+
+	if (cred == - 1) {
+		nvs_erase_all(creds);
+	} else {
+		nvs_erase_key(creds, std::to_string(cred).c_str());
+	}
+
+	nvs_commit(creds);
+}
+
 
 bool GetSsidDataByIndex(int idx, WirelessConfigurationData& data)
 {
@@ -199,9 +269,12 @@ bool ValidSocketNumber(uint8_t num)
 // Reset to default settings
 void FactoryReset()
 {
+	nvs_erase_all(ssids);
+
 	for (int i = MaxRememberedNetworks; i >= 0; i--)
 	{
 		EraseSsidData(i);
+		EraseCredential(i);
 	}
 }
 
@@ -564,9 +637,86 @@ pre(currentState == WiFiState::idle)
 	memset(&wifi_config, 0, sizeof(wifi_config));
 	SafeStrncpy((char*)wifi_config.sta.ssid, (char*)wp.ssid,
 		std::min(sizeof(wifi_config.sta.ssid), sizeof(wp.ssid)));
-	SafeStrncpy((char*)wifi_config.sta.password, (char*)wp.password,
-		std::min(sizeof(wifi_config.sta.password), sizeof(wp.password)));
+
+	if (wp.eap.protocol == EAPProtocol::NONE)
+	{
+		SafeStrncpy((char*)wifi_config.sta.password, (char*)wp.password,
+			std::min(sizeof(wifi_config.sta.password), sizeof(wp.password)));
+	}
+
 	esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+
+	if (wp.eap.protocol != EAPProtocol::NONE)
+	{
+		void *buff = calloc(1, MaxCredentialChunkSize);
+		size_t size = 0;
+
+		// Some credential arguments are deep copied inside of the esp_wifi_sta_wpa2* API
+		// so the lifetime scope can end here. The ones that need to persist are mostly the certificate
+		// arguments, and only the pointers to these arguments are stored.
+		if (CheckCredential(currentSsid, CredentialIndex(anonymousId)))
+		{
+			memset(buff, 0, MaxCredentialChunkSize);
+			size = LoadCredential(currentSsid, CredentialIndex(anonymousId), buff);
+			esp_wifi_sta_wpa2_ent_set_identity((const unsigned char*)buff, size);
+		}
+		else
+		{
+			esp_wifi_sta_wpa2_ent_clear_identity();
+		}
+
+		if (CheckCredential(currentSsid, CredentialIndex(caCert[0])))
+		{
+			// CA cert needs to persist
+			static char caCert[MaxCertificateSize] = { 0 };
+			memset(caCert, 0, sizeof(caCert));
+
+			size = LoadCredential(currentSsid, CredentialIndex(caCert[0]), caCert, MaxCertificateSize);
+			esp_wifi_sta_wpa2_ent_set_ca_cert((const unsigned char*) caCert, size);
+		}
+		else
+		{
+			esp_wifi_sta_wpa2_ent_clear_ca_cert();
+		}
+
+		if (wp.eap.protocol == EAPProtocol::EAP_TLS)
+		{
+			static char userCert[MaxCertificateSize] = { 0 };
+			static char privateKey[MaxPrivateKeySize] = { 0 };
+
+			memset(userCert, 0, sizeof(userCert));
+			size_t userCertSize = LoadCredential(currentSsid, CredentialIndex(tls.userCert), userCert, MaxCertificateSize);
+
+			memset(privateKey, 0, sizeof(privateKey));
+			size_t privateKeySize = LoadCredential(currentSsid, CredentialIndex(tls.privateKey), privateKey, MaxPrivateKeySize);
+
+			memset(buff, 0, MaxCredentialChunkSize);
+			size = LoadCredential(currentSsid, CredentialIndex(tls.privateKeyPswd), buff);
+
+			esp_wifi_sta_wpa2_ent_set_cert_key((const unsigned char*)userCert, userCertSize, (const unsigned char*)privateKey, privateKeySize, (const unsigned char*)buff, size);
+		}
+		else if (wp.eap.protocol == EAPProtocol::EAP_PEAP_MSCHAPV2 || wp.eap.protocol == EAPProtocol::EAP_PEAP_MSCHAPV2)
+		{
+			esp_wifi_sta_wpa2_ent_clear_username();
+			memset(buff, 0, MaxCredentialChunkSize);
+			size = LoadCredential(currentSsid, CredentialIndex(peapttls.identity), buff);
+			esp_wifi_sta_wpa2_ent_set_username((const unsigned char*) buff, size);
+
+			esp_wifi_sta_wpa2_ent_clear_password();
+			memset(buff, 0, MaxCredentialChunkSize);
+			size = LoadCredential(currentSsid, CredentialIndex(peapttls.password), buff);
+			esp_wifi_sta_wpa2_ent_set_password((const unsigned char*) buff, size);
+		}
+
+		free(buff);
+
+#if ESP32C3
+		// ESP8266 seem to only support MSCHAPv2, so force this on ESP32C3 as well.
+		ESP_ERROR_CHECK( esp_wifi_sta_wpa2_ent_set_ttls_phase2_method(ESP_EAP_TTLS_PHASE2_MSCHAPV2));
+#endif
+
+		ESP_ERROR_CHECK(esp_wifi_sta_wpa2_ent_enable());
+	}
 
 	tcpip_adapter_dhcpc_stop(TCPIP_ADAPTER_IF_STA);
 
@@ -955,13 +1105,21 @@ void IRAM_ATTR ProcessRequest()
 			break;
 
 		case NetworkCommand::networkAddSsid:				// add to our known access point list
+		case NetworkCommand::networkAddEnterpriseSsid:		// add an enterprise access point
 		case NetworkCommand::networkConfigureAccessPoint:	// configure our own access point details
 			if (messageHeaderIn.hdr.dataLength == sizeof(WirelessConfigurationData))
 			{
 				messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
 				hspi.transferDwords(nullptr, transferBuffer, NumDwords(sizeof(WirelessConfigurationData)));
-				const WirelessConfigurationData * const receivedClientData = reinterpret_cast<const WirelessConfigurationData *>(transferBuffer);
+				WirelessConfigurationData *receivedClientData = reinterpret_cast<WirelessConfigurationData *>(transferBuffer);
 				int index;
+
+				// Personal network assumed unless otherwise stated. PSK is indicated by WirelessConfigurationData::eap.protocol == 1,
+				// which is the null terminator for the pre-shared key. Enforce that here.
+				static_assert(offsetof(WirelessConfigurationData, eap.protocol) ==
+								offsetof(WirelessConfigurationData,
+										 password[sizeof(receivedClientData->password) - sizeof(receivedClientData->eap.protocol)]));
+
 				if (messageHeaderIn.hdr.command == NetworkCommand::networkConfigureAccessPoint)
 				{
 					index = 0;
@@ -981,6 +1139,12 @@ void IRAM_ATTR ProcessRequest()
 
 				if (index >= 0)
 				{
+					if (messageHeaderIn.hdr.command == NetworkCommand::networkAddEnterpriseSsid)
+					{
+						EraseCredential(index);
+						addedSsid = index;
+					}
+
 					SetSsidData(index, *receivedClientData);
 				}
 				else
@@ -991,6 +1155,34 @@ void IRAM_ATTR ProcessRequest()
 			else
 			{
 				SendResponse(ResponseBadDataLength);
+			}
+			break;
+
+		case NetworkCommand::networkSetEnterpriseCredential:
+			if (addedSsid > 0)
+			{
+				bool last = messageHeaderIn.hdr.flags;
+
+				if (!last)
+				{
+					messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
+
+					int cred = messageHeaderIn.hdr.socketNumber;
+					int ssid = addedSsid;
+					int sz = messageHeaderIn.hdr.dataLength;
+
+					memset(transferBuffer, 0, sizeof(transferBuffer));
+					hspi.transferDwords(nullptr, transferBuffer, NumDwords(sz));
+					SetCredential(ssid, cred, transferBuffer, sz);
+				}
+				else
+				{
+					addedSsid = -1;
+				}
+			}
+			else
+			{
+				SendResponse(ResponseWrongState);
 			}
 			break;
 
