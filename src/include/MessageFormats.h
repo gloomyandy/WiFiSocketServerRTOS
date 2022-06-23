@@ -60,15 +60,17 @@ enum class NetworkCommand : uint8_t
 	networkFactoryReset,		// delete all SSID/password info and reset factory settings in EEPROM
 	networkSetHostName,			// set the host name
 	networkGetLastError,		// get the result of the last deferred command we sent
-	networkStartScan,           // start a scan for APs the module can connect to
-	networkGetScanResult,       // get the results of the previously started scan
 
 	diagnostics,				// print LwIP stats and possibly more values over the UART line
 	networkRetrieveSsidData,	// retrieve all the SSID data we have except the passwords
 
 	// Added at version 1.24
 	networkSetTxPower,			// set transmitter power in units of 0.25db, max 82 = 20.5db
-	networkSetClockControl		// set clock control word - only provided because the ESP8266 documentation is not only crap but seriously wrong
+	networkSetClockControl,		// set clock control word - only provided because the ESP8266 documentation is not only crap but seriously wrong
+
+	// Added at version 2.0
+	networkStartScan,           // start a scan for APs the module can connect to
+	networkGetScanResult,       // get the results of the previously started scan
 };
 
 // Message header sent from the SAM to the ESP
