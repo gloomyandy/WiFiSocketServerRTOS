@@ -162,12 +162,12 @@ int FindEmptySsidEntry()
 	return -1;
 }
 
-bool SetSsidData(int idx, const WirelessConfigurationData& data, bool commit=true)
+bool SetSsidData(int idx, const WirelessConfigurationData& data)
 {
 	if (idx <= MaxRememberedNetworks) {
 		esp_err_t res = nvs_set_blob(ssids, std::to_string(idx).c_str(), &data, sizeof(data));
 
-		if (res == ESP_OK && commit) {
+		if (res == ESP_OK) {
 			res = nvs_commit(ssids);
 		}
 
@@ -177,12 +177,12 @@ bool SetSsidData(int idx, const WirelessConfigurationData& data, bool commit=tru
 	return false;
 }
 
-bool EraseSsidData(int idx, bool commit = true)
+bool EraseSsidData(int idx)
 {
 	uint8_t clean[sizeof(WirelessConfigurationData)];
 	memset(clean, 0xFF, sizeof(clean));
 	const WirelessConfigurationData& d = *(reinterpret_cast<const WirelessConfigurationData*>(clean));
-	return SetSsidData(idx, d, commit);
+	return SetSsidData(idx, d);
 }
 
 // Check socket number in range, returning true if yes. Otherwise, set lastError and return false;
@@ -197,15 +197,11 @@ bool ValidSocketNumber(uint8_t num)
 }
 
 // Reset to default settings
-void FactoryReset(bool commit=true)
+void FactoryReset()
 {
 	for (int i = MaxRememberedNetworks; i >= 0; i--)
 	{
-		EraseSsidData(i, false);
-	}
-
-	if (commit) {
-		nvs_commit(ssids);
+		EraseSsidData(i);
 	}
 }
 
@@ -1524,7 +1520,7 @@ void setup()
 	nvs_open_from_partition(ssidsNs, ssidsNs, NVS_READWRITE, &ssids);
 	nvs_iterator_t savedSsids = nvs_entry_find(ssidsNs, ssidsNs, NVS_TYPE_ANY);
 	if (!savedSsids) {
-		FactoryReset(false);
+		FactoryReset();
 
 		// Restore ap info from old firmware
 		const esp_partition_t* ssids_old = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
@@ -1541,14 +1537,12 @@ void setup()
 			for(int i = 0; i <= MaxRememberedNetworks; i++) {
 				WirelessConfigurationData *d = &(data[i]);
 				if (d->ssid[0] != 0xFF) {
-					SetSsidData(i, *d, false);
+					SetSsidData(i, *d);
 				}
 			}
 
 			free(buf);
 		}
-
-		nvs_commit(ssids);
 	}
 	nvs_release_iterator(savedSsids);
 
