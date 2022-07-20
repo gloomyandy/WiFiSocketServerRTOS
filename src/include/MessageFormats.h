@@ -145,7 +145,7 @@ const size_t MaxCertificateSize =  (8192);
 const size_t MaxPrivateKeySize = (4096);
 
 // Message data sent from SAM to ESP to add an SSID or set the access point configuration. This is also the format of a remembered SSID entry.
-struct __attribute__((__packed__)) CredentialsHeader
+struct __attribute__((__packed__)) CredentialsInfo
 {
 	uint32_t anonymousId;
 	uint32_t caCert;
@@ -163,7 +163,7 @@ struct __attribute__((__packed__)) CredentialsHeader
 	};
 };
 
-#define CredentialIndex(cred)	(offsetof(CredentialsHeader, cred)/ sizeof(uint32_t))
+#define CredentialIndex(cred)	(offsetof(CredentialsInfo, cred)/ sizeof(uint32_t))
 
 enum class EAPProtocol : uint8_t
 {
@@ -193,8 +193,8 @@ struct WirelessConfigurationData
 	union {
 		char password[PasswordLength];	// password for personal networks
 		struct {
-			CredentialsHeader credsHdr;
-			uint8_t dummy[PasswordLength - (sizeof(CredentialsHeader) + sizeof(EAPProtocol))];
+			CredentialsInfo credsSizes;
+			uint8_t dummy[PasswordLength - (sizeof(CredentialsInfo) + sizeof(EAPProtocol))];
 			EAPProtocol protocol;	// null terminator if PSK
 		} eap;
 	};

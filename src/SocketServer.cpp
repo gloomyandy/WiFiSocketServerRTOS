@@ -53,6 +53,7 @@ extern "C"
 #if ESP8266
 #include "esp8266/spi.h"
 #include "esp8266/gpio.h"
+#include "esp8266/partition.h"
 #else
 #include "esp32c3/spi.h"
 #endif
@@ -164,23 +165,64 @@ size_t GetCredential(int ssid, int cred, int chunk, void* buff, size_t sz)
 	return sz;
 }
 
-size_t LoadCredential(int ssid, int cred, void* buff, int size)
+const uint8_t* LoadCredentials(int ssid, CredentialsInfo& offsets)
 {
-	size_t total = 0;
+	// Erase scratch partition
+	static const esp_partition_t* scratch = nullptr;
+	static const uint8_t* base = nullptr;
 
-	uint8_t *buff8 = static_cast<uint8_t*>(buff);
-
-	for(int chunk = 0, sz = size; sz && total < size; chunk++)
+	if (!scratch)
 	{
-		if ((sz = GetCredential(ssid, cred, chunk, nullptr, 0)))
+		scratch = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
+			ESP_PARTITION_SUBTYPE_DATA_NVS, "scratch");
+	}
+
+	if (scratch)
+	{
+		if (!base)
 		{
-			sz = GetCredential(ssid, cred, chunk, static_cast<void*>(&buff8[total]), sz);
-			total += sz;
+			spi_flash_mmap_handle_t  mapHandle;
+			// Memory map the partition. The base pointer will be returned.
+			esp_partition_mmap(scratch, 0, scratch->size, SPI_FLASH_MMAP_DATA, (const void**)&base, &mapHandle);
+		}
+
+		size_t offset = 0;
+		esp_err_t err = esp_partition_erase_range(scratch, offset, scratch->size);
+
+		if (err == ESP_OK)
+		{
+			// Store offsets from the base partition
+			uint32_t *offsetsArr = reinterpret_cast<uint32_t*>(&offsets);
+			uint8_t *buff = static_cast<uint8_t*>(malloc(MaxCredentialChunkSize));
+
+			for(int cred = 0; cred < sizeof(offsets)/sizeof(offsetsArr[0]); cred++)
+			{
+				offsetsArr[cred] = offset;
+
+				for(int chunk = 0; ; chunk++)
+				{
+					memset(buff, 0, MaxCredentialChunkSize);
+					size_t sz = 0;
+					if ((sz = GetCredential(ssid, cred, chunk, nullptr, 0)))
+					{
+						sz = GetCredential(ssid, cred, chunk, buff, sz);
+						esp_partition_write(scratch, offset, buff, sz);
+						offset += sz;
+					}
+					else
+					{
+						break;
+					}
+				}
+			}
+
+			free(buff);
 		}
 	}
 
-	return total;
+	return base;
 }
+
 
 void EraseCredentials(int ssid)
 {
@@ -274,6 +316,7 @@ void FactoryReset()
 		EraseCredentials(i);
 	}
 }
+
 
 static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 								int32_t event_id, void* event_data)
@@ -645,66 +688,44 @@ pre(currentState == WiFiState::idle)
 
 	if (wp.eap.protocol != EAPProtocol::NONE)
 	{
-		void *buff = calloc(1, MaxCredentialChunkSize);
+		CredentialsInfo offsets;
+		CredentialsInfo& sizes = wp.eap.credsSizes;
 
-		// Some credential arguments are deep copied inside of the esp_wifi_sta_wpa2* API
-		// so the lifetime scope can end here. The ones that need to persist are mostly the certificate
-		// arguments, and only the pointers to these arguments are stored.
-		if (wp.eap.credsHdr.anonymousId)
+		const uint8_t* base = LoadCredentials(currentSsid, offsets);
+
+		esp_wifi_sta_wpa2_ent_clear_identity();
+		if (sizes.anonymousId)
 		{
-			memset(buff, 0, MaxCredentialChunkSize);
-			size_t size = LoadCredential(currentSsid, CredentialIndex(anonymousId), buff, wp.eap.credsHdr.anonymousId);
-			esp_wifi_sta_wpa2_ent_set_identity((const unsigned char*)buff, size);
-		}
-		else
-		{
-			esp_wifi_sta_wpa2_ent_clear_identity();
+			esp_wifi_sta_wpa2_ent_set_identity(base + offsets.anonymousId, sizes.anonymousId);
 		}
 
-		if (wp.eap.credsHdr.caCert)
+		esp_wifi_sta_wpa2_ent_clear_ca_cert();
+		if (sizes.caCert)
 		{
-			// CA cert needs to persist
-			static char caCert[MaxCertificateSize] = { 0 }; // TODO [wpa2_ent]: use proper buffer
-			memset(caCert, 0, sizeof(caCert));
-
-			size_t size = LoadCredential(currentSsid, CredentialIndex(caCert), caCert, wp.eap.credsHdr.caCert);
-			esp_wifi_sta_wpa2_ent_set_ca_cert((const unsigned char*) caCert, size);
-		}
-		else
-		{
-			esp_wifi_sta_wpa2_ent_clear_ca_cert();
+			esp_wifi_sta_wpa2_ent_set_ca_cert(base + offsets.caCert, sizes.caCert);
 		}
 
 		if (wp.eap.protocol == EAPProtocol::EAP_TLS)
 		{
-			static char userCert[MaxCertificateSize] = { 0 }; // TODO [wpa2_ent]: use proper buffer
-			static char privateKey[MaxPrivateKeySize] = { 0 }; // TODO [wpa2_ent]: use proper buffer
+			const uint8_t *privateKeyPswd = nullptr;
+			if (sizes.tls.privateKeyPswd)
+			{
+				privateKeyPswd = base + offsets.tls.privateKeyPswd;
+			}
 
-			memset(userCert, 0, sizeof(userCert));
-			size_t userCertSize = LoadCredential(currentSsid, CredentialIndex(tls.userCert), userCert, wp.eap.credsHdr.tls.userCert);
-
-			memset(privateKey, 0, sizeof(privateKey));
-			size_t privateKeySize = LoadCredential(currentSsid, CredentialIndex(tls.privateKey), privateKey, wp.eap.credsHdr.tls.privateKey);
-
-			memset(buff, 0, MaxCredentialChunkSize);
-			size_t size = LoadCredential(currentSsid, CredentialIndex(tls.privateKeyPswd), buff, wp.eap.credsHdr.tls.privateKeyPswd);
-
-			esp_wifi_sta_wpa2_ent_set_cert_key((const unsigned char*)userCert, userCertSize, (const unsigned char*)privateKey, privateKeySize, (const unsigned char*)buff, size);
+			esp_wifi_sta_wpa2_ent_clear_cert_key();
+			esp_wifi_sta_wpa2_ent_set_cert_key(base + offsets.tls.userCert, sizes.tls.userCert,
+											base + offsets.tls.privateKey, sizes.tls.privateKey,
+											privateKeyPswd, sizes.tls.privateKeyPswd);
 		}
 		else if (wp.eap.protocol == EAPProtocol::EAP_PEAP_MSCHAPV2 || wp.eap.protocol == EAPProtocol::EAP_TTLS_MSCHAPV2)
 		{
 			esp_wifi_sta_wpa2_ent_clear_username();
-			memset(buff, 0, MaxCredentialChunkSize);
-			size_t size = LoadCredential(currentSsid, CredentialIndex(peapttls.identity), buff, wp.eap.credsHdr.peapttls.identity);
-			esp_wifi_sta_wpa2_ent_set_username((const unsigned char*) buff, size);
+			esp_wifi_sta_wpa2_ent_set_username(base + offsets.peapttls.identity, sizes.peapttls.identity);
 
 			esp_wifi_sta_wpa2_ent_clear_password();
-			memset(buff, 0, MaxCredentialChunkSize);
-			size = LoadCredential(currentSsid, CredentialIndex(peapttls.password), buff, wp.eap.credsHdr.peapttls.password);
-			esp_wifi_sta_wpa2_ent_set_password((const unsigned char*) buff, size);
+			esp_wifi_sta_wpa2_ent_set_password(base + offsets.peapttls.password, sizes.peapttls.password);
 		}
-
-		free(buff);
 
 #if ESP32C3
 		// ESP8266 seem to only support MSCHAPv2, so force this on ESP32C3 as well.
@@ -912,7 +933,6 @@ void IRAM_ATTR ProcessRequest()
 	messageHeaderOut.hdr.formatVersion = MyFormatVersion;
 	messageHeaderOut.hdr.state = currentState;
 	bool deferCommand = false;
-
 
 	// Begin the transaction
 	gpio_set_level(SamSSPin, 0);		// assert CS to SAM
@@ -1207,10 +1227,10 @@ void IRAM_ATTR ProcessRequest()
 							memset(transferBuffer, 0, sizeof(transferBuffer));
 							hspi.transferDwords(nullptr, transferBuffer, NumDwords(messageHeaderIn.hdr.dataLength));
 
-							uint32_t *credsHdr = reinterpret_cast<uint32_t*>(&(newSsid->eap.credsHdr));
+							uint32_t *credsSizes = reinterpret_cast<uint32_t*>(&(newSsid->eap.credsSizes));
 
-							credsHdr[cred] += messageHeaderIn.hdr.dataLength;
-							SetCredential(newSsidIdx, cred, credsHdr[cred]/MaxCredentialChunkSize, transferBuffer, messageHeaderIn.hdr.dataLength);
+							credsSizes[cred] += messageHeaderIn.hdr.dataLength;
+							SetCredential(newSsidIdx, cred, credsSizes[cred]/MaxCredentialChunkSize, transferBuffer, messageHeaderIn.hdr.dataLength);
 						}
 						else if (state == AddEnterpriseSsidFlag::COMMIT) // commit
 						{

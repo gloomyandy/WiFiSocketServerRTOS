@@ -73,7 +73,7 @@ const uint8_t Backlog = 8;
 
 #define MAIN_PRIO								(ESP_TASK_TCPIP_PRIO + 1)
 #define CONN_POLL_PRIO							(ESP_TASKD_EVENT_PRIO - 1)
-#define CONN_POLL_STACK							(2048)
+#define CONN_POLL_STACK							(16384)
 #define LISTEN_PRIO								(ESP_TASK_TCPIP_PRIO)
 #define LISTEN_STACK							(768)
 #define DNS_SERVER_PRIO							(ESP_TASK_MAIN_PRIO)
