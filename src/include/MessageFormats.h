@@ -73,8 +73,7 @@ enum class NetworkCommand : uint8_t
 	// Added at version 2.0
 	networkStartScan,           // start a scan for APs the module can connect to
 	networkGetScanResult,       // get the results of the previously started scan
-	networkAddEnterpriseSsid,
-	networkSetEnterpriseCredential
+	networkAddEnterpriseSsid,	// add an enterprise ssid or its credentials
 };
 
 // Message header sent from the SAM to the ESP
@@ -149,7 +148,7 @@ const size_t MaxPrivateKeySize = (4096);
 struct __attribute__((__packed__)) CredentialsHeader
 {
 	uint32_t anonymousId;
-	uint32_t caCert[MaxCertificateSize/MaxCredentialChunkSize];
+	uint32_t caCert;
 	union {
 		struct {
 			uint32_t identity;
@@ -157,8 +156,8 @@ struct __attribute__((__packed__)) CredentialsHeader
 		} peapttls;
 
 		struct {
-			uint32_t userCert[MaxCertificateSize/MaxCredentialChunkSize];
-			uint32_t privateKey[MaxPrivateKeySize/MaxPrivateKeySize];
+			uint32_t userCert;
+			uint32_t privateKey;
 			uint32_t privateKeyPswd;
 		} tls;
 	};
@@ -175,6 +174,13 @@ enum class EAPProtocol : uint8_t
 	UNSUPPORTED = UINT8_MAX
 };
 
+enum class AddEnterpriseSsidFlag : uint8_t
+{
+	SSID = 0,		// SSID info is sent
+	CREDENTIAL,		// Credentials for SSID are stored
+	COMMIT,			// SSID info is stored
+};
+
 struct WirelessConfigurationData
 {
 	uint32_t ip;					// IP address. 0 means use DHCP (only valid in client mode)
@@ -187,7 +193,8 @@ struct WirelessConfigurationData
 	union {
 		char password[PasswordLength];	// password for personal networks
 		struct {
-			char dummy[PasswordLength - 1];
+			CredentialsHeader credsHdr;
+			uint8_t dummy[PasswordLength - (sizeof(CredentialsHeader) + sizeof(EAPProtocol))];
 			EAPProtocol protocol;	// null terminator if PSK
 		} eap;
 	};
