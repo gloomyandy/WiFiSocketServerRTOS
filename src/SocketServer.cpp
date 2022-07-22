@@ -1241,6 +1241,7 @@ void IRAM_ATTR ProcessRequest()
 				if (index >= 0)
 				{
 					EraseSsidData(index);
+					EraseCredentials(index);
 				}
 				else
 				{
