@@ -53,7 +53,6 @@ extern "C"
 #if ESP8266
 #include "esp8266/spi.h"
 #include "esp8266/gpio.h"
-#include "esp8266/partition.h"
 #else
 #include "esp32c3/spi.h"
 #endif
@@ -126,6 +125,7 @@ static volatile wifi_scan_state_t scanState = WIFI_SCAN_IDLE;
 static wifi_ap_record_t *wifiScanAPs = nullptr;
 static uint16_t wifiScanNum = 0;
 
+#if ESP32C3
 nvs_handle_t OpenCredentialStore(int ssid, bool write)
 {
 	char ssidCredsNs[16] = { 0 };
@@ -223,13 +223,13 @@ const uint8_t* LoadCredentials(int ssid, CredentialsInfo& offsets)
 	return base;
 }
 
-
 void EraseCredentials(int ssid)
 {
 	nvs_handle_t creds = OpenCredentialStore(ssid, true);
 	nvs_erase_all(creds);
 	nvs_commit(creds);
 }
+#endif
 
 bool GetSsidDataByIndex(int idx, WirelessConfigurationData& data)
 {
@@ -313,7 +313,9 @@ void FactoryReset()
 	for (int i = MaxRememberedNetworks; i >= 0; i--)
 	{
 		EraseSsidData(i);
+#if ESP32C3
 		EraseCredentials(i);
+#endif
 	}
 }
 
@@ -686,6 +688,7 @@ pre(currentState == WiFiState::idle)
 
 	esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
 
+#if ESP32C3
 	if (wp.eap.protocol != EAPProtocol::NONE)
 	{
 		CredentialsInfo offsets;
@@ -727,13 +730,11 @@ pre(currentState == WiFiState::idle)
 			esp_wifi_sta_wpa2_ent_set_password(base + offsets.peapttls.password, sizes.peapttls.password);
 		}
 
-#if ESP32C3
-		// ESP8266 seem to only support MSCHAPv2, so force this on ESP32C3 as well.
-		ESP_ERROR_CHECK( esp_wifi_sta_wpa2_ent_set_ttls_phase2_method(ESP_EAP_TTLS_PHASE2_MSCHAPV2));
-#endif
+		esp_wifi_sta_wpa2_ent_set_ttls_phase2_method(ESP_EAP_TTLS_PHASE2_MSCHAPV2);
 
-		ESP_ERROR_CHECK(esp_wifi_sta_wpa2_ent_enable());
+		esp_wifi_sta_wpa2_ent_enable();
 	}
+#endif
 
 	tcpip_adapter_dhcpc_stop(TCPIP_ADAPTER_IF_STA);
 
@@ -1161,6 +1162,7 @@ void IRAM_ATTR ProcessRequest()
 			}
 			break;
 
+#if ESP32C3
 		case NetworkCommand::networkAddEnterpriseSsid:		// add an enterprise access point
 			{
 				static WirelessConfigurationData* newSsid = nullptr;
@@ -1248,6 +1250,7 @@ void IRAM_ATTR ProcessRequest()
 				}
 			}
 			break;
+#endif
 
 		case NetworkCommand::networkDeleteSsid:				// delete a network from our access point list
 			if (messageHeaderIn.hdr.dataLength == SsidLength)
@@ -1261,7 +1264,9 @@ void IRAM_ATTR ProcessRequest()
 				if (index >= 0)
 				{
 					EraseSsidData(index);
+#if ESP32C3
 					EraseCredentials(index);
+#endif
 				}
 				else
 				{
@@ -1801,6 +1806,7 @@ void setup()
 	}
 	nvs_release_iterator(savedSsids);
 
+#if ESP32C3
 	{
 		// Storing an enterprise SSID might not have gone all the way.
 		// The SSID information is written last, after all of the credentials;
@@ -1816,6 +1822,7 @@ void setup()
 			}
 		}
 	}
+#endif
 
 	// Set up SPI hardware and request handling
 	gpio_reset_pin(SamTfrReadyPin);
