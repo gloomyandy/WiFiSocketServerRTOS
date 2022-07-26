@@ -57,6 +57,8 @@ extern "C"
 #include "esp32c3/spi.h"
 #endif
 
+#include "WirelessConfigurationMgr.h"
+
 static const uint32_t MaxConnectTime = 40 * 1000;			// how long we wait for WiFi to connect in milliseconds
 static const uint32_t TransferReadyTimeout = 10;			// how many milliseconds we allow for the Duet to set
 													// TransferReady low after the end of a transaction,
@@ -83,15 +85,13 @@ static volatile WiFiState currentState = WiFiState::idle,
 static HSPIClass hspi;
 static uint32_t transferBuffer[NumDwords(MaxDataLength + 1)];
 
-static nvs_handle_t ssids;
-static const char* ssidsNs = "ssids";
-
-
 static TaskHandle_t mainTaskHdl;
 static TaskHandle_t connPollTaskHdl;
 static TimerHandle_t tfrReqExpTmr;
 
 static const char* WIFI_EVENT_EXT = "wifi_event_ext";
+
+static WirelessConfigurationMgr *wirelessConfigMgr;
 
 typedef enum {
 	WIFI_IDLE = 0,
@@ -125,175 +125,6 @@ static volatile wifi_scan_state_t scanState = WIFI_SCAN_IDLE;
 static wifi_ap_record_t *wifiScanAPs = nullptr;
 static uint16_t wifiScanNum = 0;
 
-#if ESP32C3
-nvs_handle_t OpenCredentialStore(int ssid, bool write)
-{
-	char ssidCredsNs[16] = { 0 };
-	snprintf(ssidCredsNs, sizeof(ssidCredsNs), "cred_%d", ssid);
-
-	nvs_handle_t ssidCreds;
-	nvs_open_from_partition(ssidsNs, ssidCredsNs, write ? NVS_READWRITE : NVS_READONLY, &ssidCreds);
-
-	return ssidCreds;
-}
-
-std::string GetCredentialKey(int cred, int chunk)
-{
-	std::string key = std::to_string(cred);
-	key.append("_");
-	key.append(std::to_string(chunk));
-	return key;
-}
-
-bool SetCredential(int ssid, int cred, int chunk, const void* buff, size_t sz)
-{
-	nvs_handle_t creds = OpenCredentialStore(ssid, true);
-	esp_err_t err = nvs_set_blob(creds, GetCredentialKey(cred, chunk).c_str(), buff, sz);
-	if (err == ESP_OK) {
-		err = nvs_commit(ssids);
-	}
-	nvs_close(creds);
-
-	return err == ESP_OK;
-}
-
-size_t GetCredential(int ssid, int cred, int chunk, void* buff, size_t sz)
-{
-	nvs_handle_t creds = OpenCredentialStore(ssid, false);
-	nvs_get_blob(creds, GetCredentialKey(cred, chunk).c_str(), buff, &sz);
-	nvs_close(creds);
-	return sz;
-}
-
-const uint8_t* LoadCredentials(int ssid, CredentialsInfo& offsets)
-{
-	// Erase scratch partition
-	static const esp_partition_t* scratch = nullptr;
-	static const uint8_t* base = nullptr;
-
-	if (!scratch)
-	{
-		scratch = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
-			ESP_PARTITION_SUBTYPE_DATA_NVS, "scratch");
-	}
-
-	if (scratch)
-	{
-		if (!base)
-		{
-			spi_flash_mmap_handle_t  mapHandle;
-			// Memory map the partition. The base pointer will be returned.
-			esp_partition_mmap(scratch, 0, scratch->size, SPI_FLASH_MMAP_DATA, (const void**)&base, &mapHandle);
-		}
-
-		size_t offset = 0;
-		esp_err_t err = esp_partition_erase_range(scratch, offset, scratch->size);
-
-		if (err == ESP_OK)
-		{
-			// Store offsets from the base partition
-			uint32_t *offsetsArr = reinterpret_cast<uint32_t*>(&offsets);
-			uint8_t *buff = static_cast<uint8_t*>(malloc(MaxCredentialChunkSize));
-
-			for(int cred = 0; cred < sizeof(offsets)/sizeof(offsetsArr[0]); cred++)
-			{
-				offsetsArr[cred] = offset;
-
-				for(int chunk = 0; ; chunk++)
-				{
-					memset(buff, 0, MaxCredentialChunkSize);
-					size_t sz = 0;
-					if ((sz = GetCredential(ssid, cred, chunk, nullptr, 0)))
-					{
-						sz = GetCredential(ssid, cred, chunk, buff, sz);
-						esp_partition_write(scratch, offset, buff, sz);
-						offset += sz;
-					}
-					else
-					{
-						break;
-					}
-				}
-			}
-
-			free(buff);
-		}
-	}
-
-	return base;
-}
-
-void EraseCredentials(int ssid)
-{
-	nvs_handle_t creds = OpenCredentialStore(ssid, true);
-	nvs_erase_all(creds);
-	nvs_commit(creds);
-}
-#endif
-
-bool GetSsidDataByIndex(int idx, WirelessConfigurationData& data)
-{
-	if (idx <= MaxRememberedNetworks) {
-		size_t sz = sizeof(data);
-		esp_err_t res = nvs_get_blob(ssids, std::to_string(idx).c_str(), &data, &sz);
-		return (res == ESP_OK) && (sz == sizeof(data));
-	}
-
-	return false;
-}
-
-// Look up a SSID in our remembered network list, return pointer to it if found
-int GetSsidDataByName(const char* ssid, WirelessConfigurationData& data)
-{
-	for (int i = MaxRememberedNetworks; i >= 0; i--)
-	{
-		WirelessConfigurationData d;
-		if (GetSsidDataByIndex(i, d) && strncmp(ssid, d.ssid, sizeof(d.ssid)) == 0)
-		{
-			data = d;
-			return i;
-		}
-	}
-	return -1;
-}
-
-int FindEmptySsidEntry()
-{
-	for (int i = MaxRememberedNetworks; i >= 0; i--)
-	{
-		WirelessConfigurationData d;
-		if (GetSsidDataByIndex(i, d) && d.ssid[0] == 0xFF)
-		{
-			return i;
-		}
-	}
-
-	return -1;
-}
-
-bool SetSsidData(int idx, const WirelessConfigurationData& data)
-{
-	if (idx <= MaxRememberedNetworks) {
-		esp_err_t res = nvs_set_blob(ssids, std::to_string(idx).c_str(), &data, sizeof(data));
-
-		if (res == ESP_OK) {
-			res = nvs_commit(ssids);
-		}
-
-		return res == ESP_OK;
-	}
-
-	return false;
-}
-
-bool EraseSsidData(int idx)
-{
-	uint8_t clean[sizeof(WirelessConfigurationData)];
-	memset(clean, 0xFF, sizeof(clean));
-	const WirelessConfigurationData& d = *(reinterpret_cast<const WirelessConfigurationData*>(clean));
-	return SetSsidData(idx, d);
-}
-
 // Check socket number in range, returning true if yes. Otherwise, set lastError and return false;
 bool ValidSocketNumber(uint8_t num)
 {
@@ -304,21 +135,6 @@ bool ValidSocketNumber(uint8_t num)
 	lastError = "socket number out of range";
 	return false;
 }
-
-// Reset to default settings
-void FactoryReset()
-{
-	nvs_erase_all(ssids);
-
-	for (int i = MaxRememberedNetworks; i >= 0; i--)
-	{
-		EraseSsidData(i);
-#if ESP32C3
-		EraseCredentials(i);
-#endif
-	}
-}
-
 
 static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 								int32_t event_id, void* event_data)
@@ -495,7 +311,7 @@ void ConnectPoll(void* data)
 					strcpy(lastConnectError, error);
 					SafeStrncat(lastConnectError, " while trying to connect to ", ARRAY_SIZE(lastConnectError));
 					WirelessConfigurationData wp;
-					GetSsidDataByIndex(currentSsid, wp);
+					wirelessConfigMgr->GetSsidDataByIndex(currentSsid, wp);
 					SafeStrncat(lastConnectError, wp.ssid, ARRAY_SIZE(lastConnectError));
 					lastError = error;
 					debugPrint("Failed to connect to AP\n");
@@ -563,7 +379,7 @@ void ConnectPoll(void* data)
 		if (retry)
 		{
 			WirelessConfigurationData wp;
-			GetSsidDataByIndex(currentSsid, wp);
+			wirelessConfigMgr->GetSsidDataByIndex(currentSsid, wp);
 			currentState = WiFiState::reconnecting;
 			debugPrintf("Trying to reconnect to ssid \"%s\" with password \"%s\"\n", wp.ssid, wp.password);
 			ConnectToAccessPoint();
@@ -639,7 +455,7 @@ pre(currentState == WiFiState::idle)
 			if (strongestNetwork < 0 || ap_records[i].rssi > ap_records[strongestNetwork].rssi)
 			{
 				WirelessConfigurationData temp;
-				if (GetSsidDataByName((const char*)ap_records[i].ssid, temp) > 0)
+				if (wirelessConfigMgr->GetSsidDataByName((const char*)ap_records[i].ssid, temp) > 0)
 				{
 					strongestNetwork = i;
 				}
@@ -661,11 +477,11 @@ pre(currentState == WiFiState::idle)
 			return;
 		}
 
-		currentSsid = GetSsidDataByName(ssid, wp);
+		currentSsid = wirelessConfigMgr->GetSsidDataByName(ssid, wp);
 	}
 	else
 	{
-		int idx = GetSsidDataByName(ssid, wp);
+		int idx = wirelessConfigMgr->GetSsidDataByName(ssid, wp);
 		if (idx <= 0)
 		{
 			lastError = "no data found for requested SSID";
@@ -694,7 +510,7 @@ pre(currentState == WiFiState::idle)
 		CredentialsInfo offsets;
 		CredentialsInfo& sizes = wp.eap.credsSizes;
 
-		const uint8_t* base = LoadCredentials(currentSsid, offsets);
+		const uint8_t* base = wirelessConfigMgr->LoadCredentials(currentSsid, offsets);
 
 		esp_wifi_sta_wpa2_ent_clear_identity();
 		if (sizes.anonymousId)
@@ -824,7 +640,7 @@ void StartAccessPoint()
 {
 	esp_wifi_stop();
 	WirelessConfigurationData apData;
-	if (GetSsidDataByIndex(0, apData) && ValidApData(apData))
+	if (wirelessConfigMgr->GetSsidDataByIndex(0, apData) && ValidApData(apData))
 	{
 		esp_wifi_restore();
 		esp_err_t res = esp_wifi_set_mode(WIFI_MODE_AP);
@@ -1108,7 +924,7 @@ void IRAM_ATTR ProcessRequest()
 				response->vcc = 0;
 #endif
 				WirelessConfigurationData wp;
-				GetSsidDataByIndex(currentSsid, wp);
+				wirelessConfigMgr->GetSsidDataByIndex(currentSsid, wp);
 				SafeStrncpy(response->versionText, firmwareVersion, sizeof(response->versionText));
 				SafeStrncpy(response->hostName, webHostName, sizeof(response->hostName));
 				SafeStrncpy(response->ssid, wp.ssid, sizeof(response->ssid));
@@ -1137,10 +953,10 @@ void IRAM_ATTR ProcessRequest()
 				else
 				{
 					WirelessConfigurationData d;
-					index = GetSsidDataByName(receivedClientData->ssid, d);
+					index = wirelessConfigMgr->GetSsidDataByName(receivedClientData->ssid, d);
 					if (index < 0)
 					{
-						index = FindEmptySsidEntry();
+						index = wirelessConfigMgr->FindEmptySsidEntry();
 						if (index == 0) { // reserved for AP details
 							index = -1;
 						}
@@ -1149,7 +965,7 @@ void IRAM_ATTR ProcessRequest()
 
 				if (index >= 0)
 				{
-					SetSsidData(index, *receivedClientData);
+					wirelessConfigMgr->SetSsidData(index, *receivedClientData);
 				}
 				else
 				{
@@ -1188,16 +1004,16 @@ void IRAM_ATTR ProcessRequest()
 													password[sizeof(newSsid->password) - sizeof(newSsid->eap.protocol)]));
 
 							WirelessConfigurationData stored;
-							newSsidIdx = GetSsidDataByName(newSsid->ssid, stored);
+							newSsidIdx = wirelessConfigMgr->GetSsidDataByName(newSsid->ssid, stored);
 
 							if (newSsidIdx < 0)
 							{
-								newSsidIdx = FindEmptySsidEntry();
+								newSsidIdx = wirelessConfigMgr->FindEmptySsidEntry();
 							}
 
 							if (newSsidIdx > 0)
 							{
-								EraseCredentials(newSsidIdx);
+								wirelessConfigMgr->EraseCredentials(newSsidIdx);
 							}
 							else
 							{
@@ -1231,12 +1047,12 @@ void IRAM_ATTR ProcessRequest()
 
 							uint32_t *credsSizes = reinterpret_cast<uint32_t*>(&(newSsid->eap.credsSizes));
 
-							SetCredential(newSsidIdx, cred, credsSizes[cred]/MaxCredentialChunkSize, transferBuffer, messageHeaderIn.hdr.dataLength);
+							wirelessConfigMgr->SetCredential(newSsidIdx, cred, credsSizes[cred]/MaxCredentialChunkSize, transferBuffer, messageHeaderIn.hdr.dataLength);
 							credsSizes[cred] += messageHeaderIn.hdr.dataLength;
 						}
 						else if (state == AddEnterpriseSsidFlag::COMMIT) // commit
 						{
-							SetSsidData(newSsidIdx, *newSsid);
+							wirelessConfigMgr->SetSsidData(newSsidIdx, *newSsid);
 
 							free(newSsid);
 							newSsid = nullptr;
@@ -1259,13 +1075,13 @@ void IRAM_ATTR ProcessRequest()
 				hspi.transferDwords(nullptr, transferBuffer, NumDwords(SsidLength));
 
 				WirelessConfigurationData d;
-				int index = GetSsidDataByName(reinterpret_cast<char*>(transferBuffer), d);
+				int index = wirelessConfigMgr->GetSsidDataByName(reinterpret_cast<char*>(transferBuffer), d);
 
 				if (index >= 0)
 				{
-					EraseSsidData(index);
+					wirelessConfigMgr->EraseSsidData(index);
 #if ESP32C3
-					EraseCredentials(index);
+					wirelessConfigMgr->EraseCredentials(index);
 #endif
 				}
 				else
@@ -1291,7 +1107,7 @@ void IRAM_ATTR ProcessRequest()
 				{
 
 					WirelessConfigurationData tempData;
-					GetSsidDataByIndex(i, tempData);
+					wirelessConfigMgr->GetSsidDataByIndex(i, tempData);
 					if (tempData.ssid[0] != 0xFF)
 					{
 						memcpy(p, &tempData, ReducedWirelessConfigurationDataSize);
@@ -1314,7 +1130,7 @@ void IRAM_ATTR ProcessRequest()
 				for (size_t i = 0; i <= MaxRememberedNetworks; ++i)
 				{
 					WirelessConfigurationData tempData;
-					GetSsidDataByIndex(i, tempData);
+					wirelessConfigMgr->GetSsidDataByIndex(i, tempData);
 					if (tempData.ssid[0] != 0xFF)
 					{
 						for (size_t j = 0; j < SsidLength && tempData.ssid[j] != 0; ++j)
@@ -1683,9 +1499,8 @@ void IRAM_ATTR ProcessRequest()
 			break;
 
 		case NetworkCommand::networkFactoryReset:			// clear remembered list, reset factory defaults
-			FactoryReset();
+			wirelessConfigMgr->FactoryReset();
 			break;
-
 
 		case NetworkCommand::networkStartScan:
 			if (scanState == WIFI_SCAN_DONE)
@@ -1750,6 +1565,8 @@ void IRAM_ATTR TransferReadyIsr(void* p)
 
 void setup()
 {
+	wirelessConfigMgr = WirelessConfigurationMgr::GetInstance();
+
 	mainTaskHdl = xTaskGetCurrentTaskHandle();
 
 	// Setup Wi-Fi
@@ -1776,53 +1593,7 @@ void setup()
 
 	esp_log_level_set("wifi", ESP_LOG_NONE);
 
-	nvs_flash_init_partition(ssidsNs);
-	nvs_open_from_partition(ssidsNs, ssidsNs, NVS_READWRITE, &ssids);
-	nvs_iterator_t savedSsids = nvs_entry_find(ssidsNs, ssidsNs, NVS_TYPE_ANY);
-	if (!savedSsids) {
-		FactoryReset();
-
-		// Restore ap info from old firmware
-		const esp_partition_t* ssids_old = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
-			ESP_PARTITION_SUBTYPE_DATA_NVS, "ssids_old");
-
-		if (ssids_old) {
-			const size_t eepromSizeNeeded = (MaxRememberedNetworks + 1) * sizeof(WirelessConfigurationData);
-
-			uint8_t *buf = reinterpret_cast<uint8_t*>(malloc(eepromSizeNeeded));
-			memset(buf, 0xFF, eepromSizeNeeded);
-			esp_partition_read(ssids_old, 0, buf, eepromSizeNeeded);
-
-			WirelessConfigurationData *data = reinterpret_cast<WirelessConfigurationData*>(buf);
-			for(int i = 0; i <= MaxRememberedNetworks; i++) {
-				WirelessConfigurationData *d = &(data[i]);
-				if (d->ssid[0] != 0xFF) {
-					SetSsidData(i, *d);
-				}
-			}
-
-			free(buf);
-		}
-	}
-	nvs_release_iterator(savedSsids);
-
-#if ESP32C3
-	{
-		// Storing an enterprise SSID might not have gone all the way.
-		// The SSID information is written last, after all of the credentials;
-		// so there might be orphaned credentials taking up space. Clear them here.
-		WirelessConfigurationData data;
-
-		for(int i = 1; i < MaxRememberedNetworks; i++)
-		{
-			GetSsidDataByIndex(i, data);
-			if (data.ssid[0] == 0xFF)
-			{
-				EraseCredentials(i);
-			}
-		}
-	}
-#endif
+	wirelessConfigMgr->Init();
 
 	// Set up SPI hardware and request handling
 	gpio_reset_pin(SamTfrReadyPin);

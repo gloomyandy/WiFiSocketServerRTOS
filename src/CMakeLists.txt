@@ -4,7 +4,8 @@ set(srcs "Misc.cpp"
          "Listener.cpp"
          "SocketServer.cpp"
          "Connection.cpp"
-         "DNSServer.cpp")
+         "DNSServer.cpp"
+         "WirelessConfigurationMgr.cpp")
 set(include_dirs ".")
 
 if(IDF_TARGET STREQUAL "esp8266")
