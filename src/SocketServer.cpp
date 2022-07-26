@@ -1231,8 +1231,8 @@ void IRAM_ATTR ProcessRequest()
 
 							uint32_t *credsSizes = reinterpret_cast<uint32_t*>(&(newSsid->eap.credsSizes));
 
-							credsSizes[cred] += messageHeaderIn.hdr.dataLength;
 							SetCredential(newSsidIdx, cred, credsSizes[cred]/MaxCredentialChunkSize, transferBuffer, messageHeaderIn.hdr.dataLength);
+							credsSizes[cred] += messageHeaderIn.hdr.dataLength;
 						}
 						else if (state == AddEnterpriseSsidFlag::COMMIT) // commit
 						{
