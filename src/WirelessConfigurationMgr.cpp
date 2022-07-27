@@ -9,6 +9,11 @@ void WirelessConfigurationMgr::Init()
 	nvs_flash_init_partition(SSIDS_STORAGE_NAME);
 	nvs_open_from_partition(SSIDS_STORAGE_NAME, SSIDS_STORAGE_NAME, NVS_READWRITE, &ssidsStorage);
 
+#if ESP32C3
+	credsScratch = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
+		ESP_PARTITION_SUBTYPE_DATA_NVS, SCRATCH_STORAGE_NAME);
+#endif
+
 	nvs_iterator_t savedSsids = nvs_entry_find(SSIDS_STORAGE_NAME, SSIDS_STORAGE_NAME, NVS_TYPE_ANY);
 	if (!savedSsids) {
 		Clear();
@@ -38,9 +43,6 @@ void WirelessConfigurationMgr::Init()
 	nvs_release_iterator(savedSsids);
 
 #if ESP32C3
-	credsScratch = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
-		ESP_PARTITION_SUBTYPE_DATA_NVS, SCRATCH_STORAGE_NAME);
-
 	nvs_open_from_partition(SSIDS_STORAGE_NAME, SCRATCH_STORAGE_NAME, NVS_READWRITE, &scratchStorage);
 
 	spi_flash_mmap_handle_t  mapHandle;
@@ -102,6 +104,8 @@ std::string WirelessConfigurationMgr::GetCredentialKey(int cred, int chunk)
 
 bool WirelessConfigurationMgr::SetCredential(int ssid, int cred, int chunk, const void* buff, size_t sz)
 {
+	ResetLoadedSsid(ssid);
+
 	nvs_handle_t creds = OpenCredentialStore(ssid, true);
 	esp_err_t err = nvs_set_blob(creds, GetCredentialKey(cred, chunk).c_str(), buff, sz);
 	if (err == ESP_OK) {
@@ -120,8 +124,23 @@ size_t WirelessConfigurationMgr::GetCredential(int ssid, int cred, int chunk, vo
 	return sz;
 }
 
+void WirelessConfigurationMgr::ResetLoadedSsid(int ssid)
+{
+	uint32_t loadedSsid = 0;
+	nvs_get_u32(scratchStorage, LOADED_SSID_KEY, &loadedSsid);
+
+	if (loadedSsid == ssid)
+	{
+		nvs_set_u32(scratchStorage, LOADED_SSID_KEY, 0);
+		nvs_commit(ssidsStorage);
+	}
+}
+
 const uint8_t* WirelessConfigurationMgr::LoadCredentials(int ssid, const CredentialsInfo& sizes, CredentialsInfo& offsets)
 {
+	uint32_t loadedSsid = 0;
+	nvs_get_u32(scratchStorage, LOADED_SSID_KEY, &loadedSsid);
+
 	// Read the last offset
 	uint32_t baseOffset = 0;
 	nvs_get_u32(scratchStorage, SCRATCH_OFFSET_KEY, &baseOffset);
@@ -134,44 +153,64 @@ const uint8_t* WirelessConfigurationMgr::LoadCredentials(int ssid, const Credent
 		totalSize += sizesArr[cred];
 	}
 
-	// Increment the offset first. If it will not fit, start from the top
-	// again.
-	if (baseOffset + totalSize > credsScratch->size)
+	if (loadedSsid == ssid)
 	{
-		baseOffset = 0;
-		esp_partition_erase_range(credsScratch, baseOffset, credsScratch->size);
-	}
+		const uint32_t *sizesArr = reinterpret_cast<const uint32_t*>(&sizes);
+		uint32_t *offsetsArr = reinterpret_cast<uint32_t*>(&offsets);
 
-	nvs_set_u32(scratchStorage, SCRATCH_OFFSET_KEY, baseOffset + totalSize);
-	// Store offsets from the base offset
-	uint32_t *offsetsArr = reinterpret_cast<uint32_t*>(&offsets);
-	uint8_t *buff = static_cast<uint8_t*>(malloc(MaxCredentialChunkSize));
-
-
-	for(int cred = 0, offset = 0; cred < sizeof(offsets)/sizeof(offsetsArr[0]); cred++)
-	{
-		if (sizesArr[cred])
+		for(int cred = 0, offset = 0; cred < sizeof(offsets)/sizeof(offsetsArr[0]); cred++)
 		{
 			offsetsArr[cred] = offset;
-			int chunks = sizesArr[cred]/MaxCredentialChunkSize;
-			for(int chunk = 0; chunk <= chunks; chunk++)
+			offset += sizesArr[cred];
+		}
+
+		return (scratchBase + baseOffset - totalSize);
+	}
+	else
+	{
+		// Increment the offset first. If it will not fit, start from the top
+		// again.
+		if (baseOffset + totalSize > credsScratch->size)
+		{
+			baseOffset = 0;
+			esp_partition_erase_range(credsScratch, baseOffset, credsScratch->size);
+		}
+
+		nvs_set_u32(scratchStorage, SCRATCH_OFFSET_KEY, baseOffset + totalSize);
+
+		// Store offsets from the base offset
+		uint32_t *offsetsArr = reinterpret_cast<uint32_t*>(&offsets);
+		uint8_t *buff = static_cast<uint8_t*>(malloc(MaxCredentialChunkSize));
+
+		for(int cred = 0, offset = 0; cred < sizeof(offsets)/sizeof(offsetsArr[0]); cred++)
+		{
+			if (sizesArr[cred])
 			{
-				memset(buff, 0, MaxCredentialChunkSize);
-				size_t sz = GetCredential(ssid, cred, chunk, buff, MaxCredentialChunkSize);
-				esp_err_t err = esp_partition_write(credsScratch, baseOffset + offset, buff, sz);
-				offset += sz;
+				offsetsArr[cred] = offset;
+				int chunks = sizesArr[cred]/MaxCredentialChunkSize;
+				for(int chunk = 0; chunk <= chunks; chunk++)
+				{
+					memset(buff, 0, MaxCredentialChunkSize);
+					size_t sz = GetCredential(ssid, cred, chunk, buff, MaxCredentialChunkSize);
+					esp_err_t err = esp_partition_write(credsScratch, baseOffset + offset, buff, sz);
+
+					offset += sz;
+				}
 			}
 		}
+
+		free(buff);
+
+		nvs_set_u32(scratchStorage, LOADED_SSID_KEY, ssid);
+
+		return scratchBase + baseOffset;
 	}
-
-	free(buff);
-
-
-	return scratchBase + baseOffset;
 }
 
 void WirelessConfigurationMgr::EraseCredentials(int ssid)
 {
+	// ResetLoadedSsid(ssid);
+
 	nvs_handle_t creds = OpenCredentialStore(ssid, true);
 	nvs_erase_all(creds);
 	nvs_commit(creds);

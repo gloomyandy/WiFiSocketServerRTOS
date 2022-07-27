@@ -44,6 +44,7 @@ private:
 	std::string GetCredentialKey(int cred, int chunk);
 	nvs_handle_t OpenCredentialStore(int ssid, bool write);
 	size_t GetCredential(int ssid, int cred, int chunk, void* buff, size_t sz);
+	void ResetLoadedSsid(int ssid);
 
 	static WirelessConfigurationMgr* instance;
 
@@ -52,6 +53,7 @@ private:
 	static constexpr char SCRATCH_STORAGE_NAME[] = "scratch";
 
 	static constexpr char SCRATCH_OFFSET_KEY[] = "offset";
+	static constexpr char LOADED_SSID_KEY[] = "ssid";
 
 	nvs_handle_t ssidsStorage;
 	nvs_handle_t scratchStorage;
