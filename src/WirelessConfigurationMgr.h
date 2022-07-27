@@ -34,7 +34,7 @@ public:
 
 	bool GetSsidDataByIndex(int ssid, WirelessConfigurationData& data);
 	int GetSsidDataByName(const char* ssid, WirelessConfigurationData& data);
-	const uint8_t* LoadCredentials(int ssid, CredentialsInfo& offsets);
+	const uint8_t* LoadCredentials(int ssid, const CredentialsInfo& sizes, CredentialsInfo& offsets);
 	int FindEmptySsidEntry();
 	bool SetSsidData(int ssid, const WirelessConfigurationData& data);
 	void EraseCredentials(int ssid);
@@ -51,7 +51,11 @@ private:
 	static constexpr char CREDS_STORAGE_NAME[] = "creds_%d";
 	static constexpr char SCRATCH_STORAGE_NAME[] = "scratch";
 
+	static constexpr char SCRATCH_OFFSET_KEY[] = "offset";
+
 	nvs_handle_t ssidsStorage;
+	nvs_handle_t scratchStorage;
+
 	const esp_partition_t* credsScratch;
 
 	const uint8_t* scratchBase;

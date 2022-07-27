@@ -510,7 +510,7 @@ pre(currentState == WiFiState::idle)
 		CredentialsInfo offsets;
 		CredentialsInfo& sizes = wp.eap.credsSizes;
 
-		const uint8_t* base = wirelessConfigMgr->LoadCredentials(currentSsid, offsets);
+		const uint8_t* base = wirelessConfigMgr->LoadCredentials(currentSsid, sizes, offsets);
 
 		esp_wifi_sta_wpa2_ent_clear_identity();
 		if (sizes.anonymousId)

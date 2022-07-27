@@ -41,10 +41,11 @@ void WirelessConfigurationMgr::Init()
 	credsScratch = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
 		ESP_PARTITION_SUBTYPE_DATA_NVS, SCRATCH_STORAGE_NAME);
 
+	nvs_open_from_partition(SSIDS_STORAGE_NAME, SCRATCH_STORAGE_NAME, NVS_READWRITE, &scratchStorage);
+
 	spi_flash_mmap_handle_t  mapHandle;
 	// Memory map the partition. The base pointer will be returned.
 	esp_partition_mmap(credsScratch, 0, credsScratch->size, SPI_FLASH_MMAP_DATA, reinterpret_cast<const void**>(&scratchBase), &mapHandle);
-
 
     // Storing an enterprise SSID might not have gone all the way.
     // The SSID information is written last, after all of the credentials;
@@ -116,42 +117,54 @@ size_t WirelessConfigurationMgr::GetCredential(int ssid, int cred, int chunk, vo
 	return sz;
 }
 
-const uint8_t* WirelessConfigurationMgr::LoadCredentials(int ssid, CredentialsInfo& offsets)
+const uint8_t* WirelessConfigurationMgr::LoadCredentials(int ssid, const CredentialsInfo& sizes, CredentialsInfo& offsets)
 {
-	size_t offset = 0;
-	esp_err_t err = esp_partition_erase_range(credsScratch, offset, credsScratch->size);
+	// Read the last offset
+	uint32_t baseOffset = 0;
+	nvs_get_u32(scratchStorage, SCRATCH_OFFSET_KEY, &baseOffset);
 
-	if (err == ESP_OK)
+	// Get the total size of credentials
+	const uint32_t *sizesArr = reinterpret_cast<const uint32_t*>(&sizes);
+	size_t totalSize = 0;
+	for(int cred = 0; cred < sizeof(sizes)/sizeof(sizesArr[0]); cred++)
 	{
-		// Store offsets from the base partition
-		uint32_t *offsetsArr = reinterpret_cast<uint32_t*>(&offsets);
-		uint8_t *buff = static_cast<uint8_t*>(malloc(MaxCredentialChunkSize));
-
-		for(int cred = 0; cred < sizeof(offsets)/sizeof(offsetsArr[0]); cred++)
-		{
-			offsetsArr[cred] = offset;
-
-			for(int chunk = 0; ; chunk++)
-			{
-				memset(buff, 0, MaxCredentialChunkSize);
-				size_t sz = 0;
-				if ((sz = GetCredential(ssid, cred, chunk, nullptr, 0)))
-				{
-					sz = GetCredential(ssid, cred, chunk, buff, sz);
-					esp_partition_write(credsScratch, offset, buff, sz);
-					offset += sz;
-				}
-				else
-				{
-					break;
-				}
-			}
-		}
-
-		free(buff);
+		totalSize += sizesArr[cred];
 	}
 
-	return scratchBase;
+	// Increment the offset first. If it will not fit, start from the top
+	// again.
+	if (baseOffset + totalSize > credsScratch->size)
+	{
+		baseOffset = 0;
+		esp_partition_erase_range(credsScratch, baseOffset, credsScratch->size);
+	}
+
+	nvs_set_u32(scratchStorage, SCRATCH_OFFSET_KEY, baseOffset + totalSize);
+	// Store offsets from the base offset
+	uint32_t *offsetsArr = reinterpret_cast<uint32_t*>(&offsets);
+	uint8_t *buff = static_cast<uint8_t*>(malloc(MaxCredentialChunkSize));
+
+
+	for(int cred = 0, offset = 0; cred < sizeof(offsets)/sizeof(offsetsArr[0]); cred++)
+	{
+		if (sizesArr[cred])
+		{
+			offsetsArr[cred] = offset;
+			int chunks = sizesArr[cred]/MaxCredentialChunkSize;
+			for(int chunk = 0; chunk <= chunks; chunk++)
+			{
+				memset(buff, 0, MaxCredentialChunkSize);
+				size_t sz = GetCredential(ssid, cred, chunk, buff, MaxCredentialChunkSize);
+				esp_err_t err = esp_partition_write(credsScratch, baseOffset + offset, buff, sz);
+				offset += sz;
+			}
+		}
+	}
+
+	free(buff);
+
+
+	return scratchBase + baseOffset;
 }
 
 void WirelessConfigurationMgr::EraseCredentials(int ssid)
