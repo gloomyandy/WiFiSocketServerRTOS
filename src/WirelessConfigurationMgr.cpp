@@ -11,7 +11,7 @@ void WirelessConfigurationMgr::Init()
 
 	nvs_iterator_t savedSsids = nvs_entry_find(SSIDS_STORAGE_NAME, SSIDS_STORAGE_NAME, NVS_TYPE_ANY);
 	if (!savedSsids) {
-		FactoryReset();
+		Clear();
 
 		// Restore ap info from old firmware
 		const esp_partition_t* oldSsids = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
@@ -64,9 +64,12 @@ void WirelessConfigurationMgr::Init()
 }
 
 // Reset to default settings
-void WirelessConfigurationMgr::FactoryReset()
+void WirelessConfigurationMgr::Clear()
 {
+	esp_partition_erase_range(credsScratch, 0, credsScratch->size);
+
 	nvs_erase_all(ssidsStorage);
+	nvs_erase_all(scratchStorage);
 
 	for (int i = MaxRememberedNetworks; i >= 0; i--)
 	{

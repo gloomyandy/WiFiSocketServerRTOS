@@ -30,7 +30,7 @@ public:
 		return instance;
 	}
 	void Init();
-	void FactoryReset();
+	void Clear();
 
 	bool GetSsidDataByIndex(int ssid, WirelessConfigurationData& data);
 	int GetSsidDataByName(const char* ssid, WirelessConfigurationData& data);

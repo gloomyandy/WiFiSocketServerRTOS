@@ -125,6 +125,12 @@ static volatile wifi_scan_state_t scanState = WIFI_SCAN_IDLE;
 static wifi_ap_record_t *wifiScanAPs = nullptr;
 static uint16_t wifiScanNum = 0;
 
+// Reset to default settings
+void FactoryReset()
+{
+	wirelessConfigMgr->Clear();
+}
+
 // Check socket number in range, returning true if yes. Otherwise, set lastError and return false;
 bool ValidSocketNumber(uint8_t num)
 {
@@ -1499,7 +1505,7 @@ void IRAM_ATTR ProcessRequest()
 			break;
 
 		case NetworkCommand::networkFactoryReset:			// clear remembered list, reset factory defaults
-			wirelessConfigMgr->FactoryReset();
+			FactoryReset();
 			break;
 
 		case NetworkCommand::networkStartScan:
