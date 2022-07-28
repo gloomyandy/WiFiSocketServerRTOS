@@ -23,11 +23,12 @@ void WirelessConfigurationMgr::Init()
 	 **/
 
 	nvs_flash_init_partition(SSIDS_STORAGE_NAME);
-
 	nvs_open_from_partition(SSIDS_STORAGE_NAME, SSIDS_STORAGE_NAME, NVS_READWRITE, &ssidsStorage);
-	nvs_open_from_partition(SSIDS_STORAGE_NAME, SCRATCH_STORAGE_NAME, NVS_READWRITE, &scratchStorage);
 
+#if SUPPORT_WPA2_ENTERPRISE
+	nvs_open_from_partition(SSIDS_STORAGE_NAME, SCRATCH_STORAGE_NAME, NVS_READWRITE, &scratchStorage);
 	credsScratch = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, SCRATCH_STORAGE_NAME);
+#endif
 
 	nvs_iterator_t savedSsids = nvs_entry_find(SSIDS_STORAGE_NAME, SSIDS_STORAGE_NAME, NVS_TYPE_ANY);
 	if (!savedSsids) {
@@ -57,6 +58,7 @@ void WirelessConfigurationMgr::Init()
 	}
 	nvs_release_iterator(savedSsids);
 
+#if SUPPORT_WPA2_ENTERPRISE
 	// Memory map the partition. The base pointer will be returned.
 	spi_flash_mmap_handle_t  mapHandle;
 	esp_partition_mmap(credsScratch, 0, credsScratch->size, SPI_FLASH_MMAP_DATA, reinterpret_cast<const void**>(&scratchBase), &mapHandle);
@@ -74,6 +76,7 @@ void WirelessConfigurationMgr::Init()
 			EraseCredentials(i);
 		}
 	}
+#endif
 }
 
 void WirelessConfigurationMgr::Clear()
@@ -85,18 +88,131 @@ void WirelessConfigurationMgr::Clear()
 	 *  - the scratch key-value storage namespace must be cleared
 	 *  - the credential key-value storage namespace for each SSID must be cleared
 	 **/
-	esp_partition_erase_range(credsScratch, 0, credsScratch->size);
-
 	nvs_erase_all(ssidsStorage);
+
+#if SUPPORT_WPA2_ENTERPRISE
+	esp_partition_erase_range(credsScratch, 0, credsScratch->size);
 	nvs_erase_all(scratchStorage);
+#endif
 
 	for (int i = MaxRememberedNetworks; i >= 0; i--)
 	{
-		EraseSsidData(i);
-		EraseCredentials(i);
+		EraseSsid(i);
 	}
 }
 
+
+std::string WirelessConfigurationMgr::GetSsidKey(int ssid)
+{
+	return std::to_string(ssid).c_str();
+}
+
+int WirelessConfigurationMgr::FindEmptySsidEntry()
+{
+	for (int i = MaxRememberedNetworks; i >= 0; i--)
+	{
+		WirelessConfigurationData d;
+		if (GetSsid(i, d) && d.ssid[0] == 0xFF)
+		{
+			return i;
+		}
+	}
+
+	return -1;
+}
+
+bool WirelessConfigurationMgr::SetSsidData(int ssid, const WirelessConfigurationData& data)
+{
+	if (ssid <= MaxRememberedNetworks) {
+		esp_err_t res = nvs_set_blob(ssidsStorage, GetSsidKey(ssid).c_str(), &data, sizeof(data));
+
+		if (res == ESP_OK) {
+			res = nvs_commit(ssidsStorage);
+		}
+
+		return res == ESP_OK;
+	}
+
+	return false;
+}
+
+bool WirelessConfigurationMgr::EraseSsidData(int ssid)
+{
+	uint8_t clean[sizeof(WirelessConfigurationData)];
+	memset(clean, 0xFF, sizeof(clean));
+	const WirelessConfigurationData& d = *(reinterpret_cast<const WirelessConfigurationData*>(clean));
+	return SetSsidData(ssid, d);
+}
+
+int WirelessConfigurationMgr::SetSsid(const WirelessConfigurationData& data, bool ap = false)
+{
+	WirelessConfigurationData d;
+	int ssid = GetSsid(data.ssid, d);
+
+	if (ssid < 0)
+	{
+		ssid = FindEmptySsidEntry();
+		if (ssid == 0 && !ap) { // reserved for AP details
+			ssid = -1;
+		}
+	}
+
+	if (ssid >= 0)
+	{
+		SetSsidData(ssid, data);
+	}
+
+	return ssid;
+}
+
+bool WirelessConfigurationMgr::EraseSsid(int ssid)
+{
+	if (ssid >= 0)
+	{
+		EraseSsidData(ssid);
+
+#if SUPPORT_WPA2_ENTERPRISE
+		EraseCredentials(ssid);
+#endif
+
+		return true;
+	}
+
+	return false;
+}
+
+bool WirelessConfigurationMgr::EraseSsid(const char *ssid)
+{
+	WirelessConfigurationData temp;
+	return EraseSsid(GetSsid(ssid, temp));
+}
+
+bool WirelessConfigurationMgr::GetSsid(int ssid, WirelessConfigurationData& data)
+{
+	if (ssid <= MaxRememberedNetworks) {
+		size_t sz = sizeof(data);
+		esp_err_t res = nvs_get_blob(ssidsStorage, GetSsidKey(ssid).c_str(), &data, &sz);
+		return (res == ESP_OK) && (sz == sizeof(data));
+	}
+
+	return false;
+}
+
+int WirelessConfigurationMgr::GetSsid(const char *ssid, WirelessConfigurationData& data)
+{
+	for (int i = MaxRememberedNetworks; i >= 0; i--)
+	{
+		WirelessConfigurationData d;
+		if (GetSsid(i, d) && strncmp(ssid, d.ssid, sizeof(d.ssid)) == 0)
+		{
+			data = d;
+			return i;
+		}
+	}
+	return -1;
+}
+
+#if SUPPORT_WPA2_ENTERPRISE
 nvs_handle_t WirelessConfigurationMgr::OpenCredentialStorage(int ssid, bool write)
 {
 	char ssidCredsNs[NVS_KEY_NAME_MAX_SIZE] = { 0 };
@@ -232,110 +348,6 @@ void WirelessConfigurationMgr::EraseCredentials(int ssid)
 	nvs_close(creds);
 }
 
-std::string WirelessConfigurationMgr::GetSsidKey(int ssid)
-{
-	return std::to_string(ssid).c_str();
-}
-
-int WirelessConfigurationMgr::FindEmptySsidEntry()
-{
-	for (int i = MaxRememberedNetworks; i >= 0; i--)
-	{
-		WirelessConfigurationData d;
-		if (GetSsid(i, d) && d.ssid[0] == 0xFF)
-		{
-			return i;
-		}
-	}
-
-	return -1;
-}
-
-bool WirelessConfigurationMgr::SetSsidData(int ssid, const WirelessConfigurationData& data)
-{
-	if (ssid <= MaxRememberedNetworks) {
-		esp_err_t res = nvs_set_blob(ssidsStorage, GetSsidKey(ssid).c_str(), &data, sizeof(data));
-
-		if (res == ESP_OK) {
-			res = nvs_commit(ssidsStorage);
-		}
-
-		return res == ESP_OK;
-	}
-
-	return false;
-}
-
-bool WirelessConfigurationMgr::EraseSsidData(int ssid)
-{
-	uint8_t clean[sizeof(WirelessConfigurationData)];
-	memset(clean, 0xFF, sizeof(clean));
-	const WirelessConfigurationData& d = *(reinterpret_cast<const WirelessConfigurationData*>(clean));
-	return SetSsidData(ssid, d);
-}
-
-int WirelessConfigurationMgr::SetSsid(const WirelessConfigurationData& data, bool ap = false)
-{
-	WirelessConfigurationData d;
-	int ssid = GetSsid(data.ssid, d);
-
-	if (ssid < 0)
-	{
-		ssid = FindEmptySsidEntry();
-		if (ssid == 0 && !ap) { // reserved for AP details
-			ssid = -1;
-		}
-	}
-
-	if (ssid >= 0)
-	{
-		SetSsidData(ssid, data);
-	}
-
-	return ssid;
-}
-
-bool WirelessConfigurationMgr::EraseSsid(const char *ssid)
-{
-	WirelessConfigurationData temp;
-	int _ssid = GetSsid(ssid, temp);
-
-	if (_ssid >= 0)
-	{
-		EraseSsidData(_ssid);
-		EraseCredentials(_ssid);
-
-		return true;
-	}
-
-	return false;
-}
-
-bool WirelessConfigurationMgr::GetSsid(int ssid, WirelessConfigurationData& data)
-{
-	if (ssid <= MaxRememberedNetworks) {
-		size_t sz = sizeof(data);
-		esp_err_t res = nvs_get_blob(ssidsStorage, GetSsidKey(ssid).c_str(), &data, &sz);
-		return (res == ESP_OK) && (sz == sizeof(data));
-	}
-
-	return false;
-}
-
-int WirelessConfigurationMgr::GetSsid(const char *ssid, WirelessConfigurationData& data)
-{
-	for (int i = MaxRememberedNetworks; i >= 0; i--)
-	{
-		WirelessConfigurationData d;
-		if (GetSsid(i, d) && strncmp(ssid, d.ssid, sizeof(d.ssid)) == 0)
-		{
-			data = d;
-			return i;
-		}
-	}
-	return -1;
-}
-
 bool WirelessConfigurationMgr::BeginEnterpriseSsid(const WirelessConfigurationData &data)
 {
 	pendingEnterpriseSsidData = static_cast<WirelessConfigurationData*>(calloc(1, sizeof(data)));
@@ -387,3 +399,4 @@ bool WirelessConfigurationMgr::EndEnterpriseSsid()
 
 	return res;
 }
+#endif

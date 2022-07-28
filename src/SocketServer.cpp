@@ -510,7 +510,7 @@ pre(currentState == WiFiState::idle)
 
 	esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
 
-#if ESP32C3
+#if SUPPORT_WPA2_ENTERPRISE
 	if (wp.eap.protocol != EAPProtocol::NONE)
 	{
 		CredentialsInfo offsets;
@@ -965,7 +965,7 @@ void IRAM_ATTR ProcessRequest()
 			}
 			break;
 
-#if ESP32C3
+#if SUPPORT_WPA2_ENTERPRISE
 		case NetworkCommand::networkAddEnterpriseSsid:		// add an enterprise access point
 			{
 				static bool pending = false;
