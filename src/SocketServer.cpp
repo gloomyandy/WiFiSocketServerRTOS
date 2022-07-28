@@ -317,7 +317,7 @@ void ConnectPoll(void* data)
 					strcpy(lastConnectError, error);
 					SafeStrncat(lastConnectError, " while trying to connect to ", ARRAY_SIZE(lastConnectError));
 					WirelessConfigurationData wp;
-					wirelessConfigMgr->GetSsidDataByIndex(currentSsid, wp);
+					wirelessConfigMgr->GetSsid(currentSsid, wp);
 					SafeStrncat(lastConnectError, wp.ssid, ARRAY_SIZE(lastConnectError));
 					lastError = error;
 					debugPrint("Failed to connect to AP\n");
@@ -385,7 +385,7 @@ void ConnectPoll(void* data)
 		if (retry)
 		{
 			WirelessConfigurationData wp;
-			wirelessConfigMgr->GetSsidDataByIndex(currentSsid, wp);
+			wirelessConfigMgr->GetSsid(currentSsid, wp);
 			currentState = WiFiState::reconnecting;
 			debugPrintf("Trying to reconnect to ssid \"%s\" with password \"%s\"\n", wp.ssid, wp.password);
 			ConnectToAccessPoint();
@@ -461,7 +461,7 @@ pre(currentState == WiFiState::idle)
 			if (strongestNetwork < 0 || ap_records[i].rssi > ap_records[strongestNetwork].rssi)
 			{
 				WirelessConfigurationData temp;
-				if (wirelessConfigMgr->GetSsidDataByName((const char*)ap_records[i].ssid, temp) > 0)
+				if (wirelessConfigMgr->GetSsid((const char*)ap_records[i].ssid, temp) > 0)
 				{
 					strongestNetwork = i;
 				}
@@ -483,11 +483,11 @@ pre(currentState == WiFiState::idle)
 			return;
 		}
 
-		currentSsid = wirelessConfigMgr->GetSsidDataByName(ssid, wp);
+		currentSsid = wirelessConfigMgr->GetSsid(ssid, wp);
 	}
 	else
 	{
-		int idx = wirelessConfigMgr->GetSsidDataByName(ssid, wp);
+		int idx = wirelessConfigMgr->GetSsid(ssid, wp);
 		if (idx <= 0)
 		{
 			lastError = "no data found for requested SSID";
@@ -516,7 +516,7 @@ pre(currentState == WiFiState::idle)
 		CredentialsInfo offsets;
 		CredentialsInfo& sizes = wp.eap.credsSizes;
 
-		const uint8_t* base = wirelessConfigMgr->LoadCredentials(currentSsid, sizes, offsets);
+		const uint8_t* base = wirelessConfigMgr->GetEnterpriseCredentials(currentSsid, sizes, offsets);
 
 		esp_wifi_sta_wpa2_ent_clear_identity();
 		if (sizes.anonymousId)
@@ -646,7 +646,7 @@ void StartAccessPoint()
 {
 	esp_wifi_stop();
 	WirelessConfigurationData apData;
-	if (wirelessConfigMgr->GetSsidDataByIndex(0, apData) && ValidApData(apData))
+	if (wirelessConfigMgr->GetSsid(0, apData) && ValidApData(apData))
 	{
 		esp_wifi_restore();
 		esp_err_t res = esp_wifi_set_mode(WIFI_MODE_AP);
@@ -930,7 +930,7 @@ void IRAM_ATTR ProcessRequest()
 				response->vcc = 0;
 #endif
 				WirelessConfigurationData wp;
-				wirelessConfigMgr->GetSsidDataByIndex(currentSsid, wp);
+				wirelessConfigMgr->GetSsid(currentSsid, wp);
 				SafeStrncpy(response->versionText, firmwareVersion, sizeof(response->versionText));
 				SafeStrncpy(response->hostName, webHostName, sizeof(response->hostName));
 				SafeStrncpy(response->ssid, wp.ssid, sizeof(response->ssid));
@@ -950,30 +950,11 @@ void IRAM_ATTR ProcessRequest()
 				messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
 				hspi.transferDwords(nullptr, transferBuffer, NumDwords(sizeof(WirelessConfigurationData)));
 				WirelessConfigurationData *receivedClientData = reinterpret_cast<WirelessConfigurationData *>(transferBuffer);
-				int index;
 
-				if (messageHeaderIn.hdr.command == NetworkCommand::networkConfigureAccessPoint)
-				{
-					index = 0;
-				}
-				else
-				{
-					WirelessConfigurationData d;
-					index = wirelessConfigMgr->GetSsidDataByName(receivedClientData->ssid, d);
-					if (index < 0)
-					{
-						index = wirelessConfigMgr->FindEmptySsidEntry();
-						if (index == 0) { // reserved for AP details
-							index = -1;
-						}
-					}
-				}
+				int ssid = wirelessConfigMgr->SetSsid(*receivedClientData,
+							messageHeaderIn.hdr.command == NetworkCommand::networkConfigureAccessPoint);
 
-				if (index >= 0)
-				{
-					wirelessConfigMgr->SetSsidData(index, *receivedClientData);
-				}
-				else
+				if (ssid < 0)
 				{
 					lastError = "SSID table full";
 				}
@@ -987,8 +968,7 @@ void IRAM_ATTR ProcessRequest()
 #if ESP32C3
 		case NetworkCommand::networkAddEnterpriseSsid:		// add an enterprise access point
 			{
-				static WirelessConfigurationData* newSsid = nullptr;
-				static int newSsidIdx = -1;
+				static bool pending = false;
 
 				AddEnterpriseSsidFlag state = static_cast<AddEnterpriseSsidFlag>(messageHeaderIn.hdr.flags);
 				messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
@@ -997,29 +977,14 @@ void IRAM_ATTR ProcessRequest()
 				{
 					if (messageHeaderIn.hdr.dataLength == sizeof(WirelessConfigurationData))
 					{
-						if (newSsid == nullptr && newSsidIdx < 0)
+						if (!pending)
 						{
 							hspi.transferDwords(nullptr, transferBuffer, NumDwords(messageHeaderIn.hdr.dataLength));
-							newSsid = static_cast<WirelessConfigurationData*>(calloc(1, sizeof(WirelessConfigurationData)));
-							memcpy(newSsid, transferBuffer, messageHeaderIn.hdr.dataLength);
+							WirelessConfigurationData *newSsid = reinterpret_cast<WirelessConfigurationData*>(transferBuffer);
 
-							// Personal network assumed unless otherwise stated. PSK is indicated by WirelessConfigurationData::eap.protocol == 1,
-							// which is the null terminator for the pre-shared key. Enforce that here.
-							static_assert(offsetof(WirelessConfigurationData, eap.protocol) ==
-											offsetof(WirelessConfigurationData,
-													password[sizeof(newSsid->password) - sizeof(newSsid->eap.protocol)]));
-
-							WirelessConfigurationData stored;
-							newSsidIdx = wirelessConfigMgr->GetSsidDataByName(newSsid->ssid, stored);
-
-							if (newSsidIdx < 0)
+							if (wirelessConfigMgr->BeginEnterpriseSsid(*newSsid))
 							{
-								newSsidIdx = wirelessConfigMgr->FindEmptySsidEntry();
-							}
-
-							if (newSsidIdx > 0)
-							{
-								wirelessConfigMgr->EraseCredentials(newSsidIdx);
+								pending = true;
 							}
 							else
 							{
@@ -1038,31 +1003,24 @@ void IRAM_ATTR ProcessRequest()
 				}
 				else
 				{
-					if (newSsid == nullptr || newSsidIdx == -1)
+					if (!pending)
 					{
 						SendResponse(ResponseWrongState);
 					}
 					else
 					{
-						if (state == AddEnterpriseSsidFlag::CREDENTIAL) // add credential
+						if (state == AddEnterpriseSsidFlag::CREDENTIAL)
 						{
-							int cred = messageHeaderIn.hdr.socketNumber;
-
 							memset(transferBuffer, 0, sizeof(transferBuffer));
 							hspi.transferDwords(nullptr, transferBuffer, NumDwords(messageHeaderIn.hdr.dataLength));
 
-							uint32_t *credsSizes = reinterpret_cast<uint32_t*>(&(newSsid->eap.credsSizes));
-
-							wirelessConfigMgr->SetCredential(newSsidIdx, cred, credsSizes[cred]/MaxCredentialChunkSize, transferBuffer, messageHeaderIn.hdr.dataLength);
-							credsSizes[cred] += messageHeaderIn.hdr.dataLength;
+							// messageHeaderIn.hdr.socketNumber holds credential ID.
+							wirelessConfigMgr->SetEnterpriseCredential(messageHeaderIn.hdr.socketNumber, transferBuffer, messageHeaderIn.hdr.dataLength);
 						}
-						else if (state == AddEnterpriseSsidFlag::COMMIT) // commit
+						else if (state == AddEnterpriseSsidFlag::COMMIT)
 						{
-							wirelessConfigMgr->SetSsidData(newSsidIdx, *newSsid);
-
-							free(newSsid);
-							newSsid = nullptr;
-							newSsidIdx = -1;
+							wirelessConfigMgr->EndEnterpriseSsid();
+							pending = false;
 						}
 						else
 						{
@@ -1080,17 +1038,7 @@ void IRAM_ATTR ProcessRequest()
 				messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
 				hspi.transferDwords(nullptr, transferBuffer, NumDwords(SsidLength));
 
-				WirelessConfigurationData d;
-				int index = wirelessConfigMgr->GetSsidDataByName(reinterpret_cast<char*>(transferBuffer), d);
-
-				if (index >= 0)
-				{
-					wirelessConfigMgr->EraseSsidData(index);
-#if ESP32C3
-					wirelessConfigMgr->EraseCredentials(index);
-#endif
-				}
-				else
+				if (!wirelessConfigMgr->EraseSsid(reinterpret_cast<const char*>(transferBuffer)))
 				{
 					lastError = "SSID not found";
 				}
@@ -1113,7 +1061,7 @@ void IRAM_ATTR ProcessRequest()
 				{
 
 					WirelessConfigurationData tempData;
-					wirelessConfigMgr->GetSsidDataByIndex(i, tempData);
+					wirelessConfigMgr->GetSsid(i, tempData);
 					if (tempData.ssid[0] != 0xFF)
 					{
 						memcpy(p, &tempData, ReducedWirelessConfigurationDataSize);
@@ -1136,7 +1084,7 @@ void IRAM_ATTR ProcessRequest()
 				for (size_t i = 0; i <= MaxRememberedNetworks; ++i)
 				{
 					WirelessConfigurationData tempData;
-					wirelessConfigMgr->GetSsidDataByIndex(i, tempData);
+					wirelessConfigMgr->GetSsid(i, tempData);
 					if (tempData.ssid[0] != 0xFF)
 					{
 						for (size_t j = 0; j < SsidLength && tempData.ssid[j] != 0; ++j)
