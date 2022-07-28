@@ -32,7 +32,7 @@ void WirelessConfigurationMgr::Init()
 
 	nvs_iterator_t savedSsids = nvs_entry_find(SSIDS_STORAGE_NAME, SSIDS_STORAGE_NAME, NVS_TYPE_ANY);
 	if (!savedSsids) {
-		Clear();
+		Reset();
 
 		// Restore ap info from old firmware
 		const esp_partition_t* oldSsids = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
@@ -79,10 +79,10 @@ void WirelessConfigurationMgr::Init()
 #endif
 }
 
-void WirelessConfigurationMgr::Clear()
+void WirelessConfigurationMgr::Reset()
 {
 	/**
-	 * Clear storage and reset values to default.
+	 * Reset storage and reset values to default.
 	 * 	- the credentials scratch partition must be erased
 	 * 	- the SSID key-value storage namespace must be cleared, and each slot must be reset to a blank value
 	 *  - the scratch key-value storage namespace must be cleared
@@ -268,7 +268,7 @@ void WirelessConfigurationMgr::ResetIfCredentialsLoaded(int ssid)
 	}
 }
 
-const uint8_t* WirelessConfigurationMgr::GetEnterpriseCredentials(int ssid, const CredentialsInfo& sizes, CredentialsInfo& offsets)
+const uint8_t* WirelessConfigurationMgr::GetEnterpriseCredentials(int ssid, CredentialsInfo& offsets)
 {
 	uint32_t loadedSsid = 0;
 	nvs_get_u32(scratchStorage, LOADED_SSID_KEY, &loadedSsid);
@@ -277,17 +277,19 @@ const uint8_t* WirelessConfigurationMgr::GetEnterpriseCredentials(int ssid, cons
 	uint32_t baseOffset = 0;
 	nvs_get_u32(scratchStorage, SCRATCH_OFFSET_KEY, &baseOffset);
 
+	WirelessConfigurationData data;
+	GetSsid(ssid, data);
+
 	// Get the total size of credentials
-	const uint32_t *sizesArr = reinterpret_cast<const uint32_t*>(&sizes);
+	const uint32_t *sizesArr = reinterpret_cast<const uint32_t*>(&data.eap.credsSizes);
 	size_t totalSize = 0;
-	for(int cred = 0; cred < sizeof(sizes)/sizeof(sizesArr[0]); cred++)
+	for(int cred = 0; cred < sizeof(data.eap.credsSizes)/sizeof(sizesArr[0]); cred++)
 	{
 		totalSize += sizesArr[cred];
 	}
 
 	if (loadedSsid == ssid)
 	{
-		const uint32_t *sizesArr = reinterpret_cast<const uint32_t*>(&sizes);
 		uint32_t *offsetsArr = reinterpret_cast<uint32_t*>(&offsets);
 
 		for(int cred = 0, offset = 0; cred < sizeof(offsets)/sizeof(offsetsArr[0]); cred++)

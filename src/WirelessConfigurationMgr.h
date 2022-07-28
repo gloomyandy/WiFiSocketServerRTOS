@@ -36,7 +36,7 @@ public:
 	}
 
 	void Init();
-	void Clear();
+	void Reset();
 
 	int SetSsid(const WirelessConfigurationData& data, bool ap);
 	bool EraseSsid(const char *ssid);
@@ -47,7 +47,7 @@ public:
 	bool BeginEnterpriseSsid(const WirelessConfigurationData &data);
 	bool SetEnterpriseCredential(int cred, const void* buff, size_t size);
 	bool EndEnterpriseSsid();
-	const uint8_t* GetEnterpriseCredentials(int ssid, const CredentialsInfo& sizes, CredentialsInfo& offsets);
+	const uint8_t* GetEnterpriseCredentials(int ssid, CredentialsInfo& offsets);
 #endif
 private:
 

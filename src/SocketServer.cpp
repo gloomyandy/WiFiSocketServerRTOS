@@ -22,7 +22,6 @@ extern "C"
 #include "freertos/event_groups.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
-#include "esp_wpa2.h"
 #include "esp_system.h"
 #include "esp_attr.h"
 #include "esp_log.h"
@@ -43,6 +42,7 @@ extern "C"
 #include "Config.h"
 #include "PooledStrings.h"
 #include "HSPI.h"
+#include "WirelessConfigurationMgr.h"
 
 #include "include/MessageFormats.h"
 #include "Connection.h"
@@ -57,7 +57,9 @@ extern "C"
 #include "esp32c3/spi.h"
 #endif
 
-#include "WirelessConfigurationMgr.h"
+#if SUPPORT_WPA2_ENTERPRISE
+#include "esp_wpa2.h"
+#endif
 
 static const uint32_t MaxConnectTime = 40 * 1000;			// how long we wait for WiFi to connect in milliseconds
 static const uint32_t TransferReadyTimeout = 10;			// how many milliseconds we allow for the Duet to set
@@ -128,7 +130,7 @@ static uint16_t wifiScanNum = 0;
 // Reset to default settings
 void FactoryReset()
 {
-	wirelessConfigMgr->Clear();
+	wirelessConfigMgr->Reset();
 }
 
 // Check socket number in range, returning true if yes. Otherwise, set lastError and return false;
@@ -516,7 +518,7 @@ pre(currentState == WiFiState::idle)
 		CredentialsInfo offsets;
 		CredentialsInfo& sizes = wp.eap.credsSizes;
 
-		const uint8_t* base = wirelessConfigMgr->GetEnterpriseCredentials(currentSsid, sizes, offsets);
+		const uint8_t* base = wirelessConfigMgr->GetEnterpriseCredentials(currentSsid, offsets);
 
 		esp_wifi_sta_wpa2_ent_clear_identity();
 		if (sizes.anonymousId)
@@ -1519,8 +1521,6 @@ void IRAM_ATTR TransferReadyIsr(void* p)
 
 void setup()
 {
-	wirelessConfigMgr = WirelessConfigurationMgr::GetInstance();
-
 	mainTaskHdl = xTaskGetCurrentTaskHandle();
 
 	// Setup Wi-Fi
@@ -1538,6 +1538,8 @@ void setup()
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_START, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_STOP, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_SCAN_DONE, &HandleWiFiEvent, NULL);
+
+	wirelessConfigMgr = WirelessConfigurationMgr::GetInstance();
 
 	wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
 	cfg.nvs_enable = false;

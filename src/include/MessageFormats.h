@@ -16,8 +16,6 @@
 
 // First the message header formats
 const size_t SsidLength = 32;
-const size_t ReferenceIDLength = 16;
-const size_t IdentityLength = 128;
 const size_t PasswordLength = 64;
 const size_t HostNameLength = 64;
 const size_t MaxDataLength = 2048;						// maximum length of the data part of an SPI exchange
@@ -139,10 +137,10 @@ const uint8_t protocolFTP = 1;
 const uint8_t protocolTelnet = 2;
 const uint8_t protocolFtpData = 3;
 
-const size_t MaxCredentialChunkSize = (MaxDataLength);
+const size_t MaxCredentialChunkSize = MaxDataLength;
 
-const size_t MaxCertificateSize =  (8192);
-const size_t MaxPrivateKeySize = (4096);
+const size_t MaxCertificateSize = 8192;
+const size_t MaxPrivateKeySize = 4096;
 
 // Message data sent from SAM to ESP to add an SSID or set the access point configuration. This is also the format of a remembered SSID entry.
 struct __attribute__((__packed__)) CredentialsInfo
@@ -187,7 +185,7 @@ struct WirelessConfigurationData
 	uint32_t gateway;
 	uint32_t netmask;
 	uint8_t channel;				// channel number to use if running as an access point, 0 means auto
-	uint8_t security;				// what type of network security if running in access point mode
+	int8_t security;				// what type of network security if running in access point mode
 	int8_t dummy[2];
 	char ssid[SsidLength];			// the SSID
 	union {
