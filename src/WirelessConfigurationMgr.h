@@ -23,8 +23,9 @@
 
 class WirelessConfigurationMgr
 {
-
 public:
+	static constexpr int AP = 0;
+
 	static WirelessConfigurationMgr* GetInstance()
 	{
 		if (!instance)

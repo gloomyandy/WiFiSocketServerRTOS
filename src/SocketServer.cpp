@@ -646,7 +646,7 @@ void StartAccessPoint()
 {
 	esp_wifi_stop();
 	WirelessConfigurationData apData;
-	if (wirelessConfigMgr->GetSsid(0, apData) && ValidApData(apData))
+	if (wirelessConfigMgr->GetSsid(WirelessConfigurationMgr::AP, apData) && ValidApData(apData))
 	{
 		esp_wifi_restore();
 		esp_err_t res = esp_wifi_set_mode(WIFI_MODE_AP);

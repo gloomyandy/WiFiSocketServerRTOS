@@ -152,7 +152,7 @@ int WirelessConfigurationMgr::SetSsid(const WirelessConfigurationData& data, boo
 	if (ssid < 0)
 	{
 		ssid = FindEmptySsidEntry();
-		if (ssid == 0 && !ap) { // reserved for AP details
+		if (ssid == WirelessConfigurationMgr::AP && !ap) { // reserved for AP details
 			ssid = -1;
 		}
 	}
