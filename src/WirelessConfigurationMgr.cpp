@@ -153,13 +153,19 @@ bool WirelessConfigurationMgr::EraseSsidData(int ssid)
 int WirelessConfigurationMgr::SetSsid(const WirelessConfigurationData& data, bool ap = false)
 {
 	WirelessConfigurationData d;
-	int ssid = GetSsid(data.ssid, d);
 
-	if (ssid < 0)
+	int ssid = WirelessConfigurationMgr::AP;
+	
+	if (!ap)
 	{
-		ssid = FindEmptySsidEntry();
-		if (ssid == WirelessConfigurationMgr::AP && !ap) { // reserved for AP details
-			ssid = -1;
+		ssid = GetSsid(data.ssid, d);
+
+		if (ssid < 0)
+		{
+			ssid = FindEmptySsidEntry();
+			if (ssid == WirelessConfigurationMgr::AP) { // reserved for AP details
+				ssid = -1;
+			}
 		}
 	}
 
