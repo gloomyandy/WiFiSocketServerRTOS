@@ -154,11 +154,13 @@ static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
 		wifi_event_sta_disconnected_t* disconnected = (wifi_event_sta_disconnected_t*) event_data;
 		switch (disconnected->reason) {
+			// include authentication failures in general
 			case WIFI_REASON_AUTH_EXPIRE:
 			case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
 			case WIFI_REASON_AUTH_FAIL:
 			case WIFI_REASON_ASSOC_FAIL:
 			case WIFI_REASON_HANDSHAKE_TIMEOUT:
+			case WIFI_REASON_802_1X_AUTH_FAILED:
 				wifiEvt = STATION_WRONG_PASSWORD;
 				break;
 			case WIFI_REASON_NO_AP_FOUND:
@@ -285,7 +287,7 @@ void ConnectPoll(void* data)
 					break;
 
 				case STATION_WRONG_PASSWORD:
-					error = "Wrong password";
+					error = "Authentication failed";
 					break;
 
 				case STATION_NO_AP_FOUND:
