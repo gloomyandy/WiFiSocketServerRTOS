@@ -520,13 +520,18 @@ pre(currentState == WiFiState::idle)
 
 		const uint8_t* base = wirelessConfigMgr->GetEnterpriseCredentials(currentSsid, offsets);
 
+		// Clear all previously set credentials
 		esp_wifi_sta_wpa2_ent_clear_identity();
+		esp_wifi_sta_wpa2_ent_clear_ca_cert();
+		esp_wifi_sta_wpa2_ent_clear_cert_key();
+		esp_wifi_sta_wpa2_ent_clear_username();
+		esp_wifi_sta_wpa2_ent_clear_password();
+
 		if (sizes.anonymousId)
 		{
 			esp_wifi_sta_wpa2_ent_set_identity(base + offsets.anonymousId, sizes.anonymousId);
 		}
 
-		esp_wifi_sta_wpa2_ent_clear_ca_cert();
 		if (sizes.caCert)
 		{
 			esp_wifi_sta_wpa2_ent_set_ca_cert(base + offsets.caCert, sizes.caCert);
@@ -540,17 +545,13 @@ pre(currentState == WiFiState::idle)
 				privateKeyPswd = base + offsets.tls.privateKeyPswd;
 			}
 
-			esp_wifi_sta_wpa2_ent_clear_cert_key();
 			esp_wifi_sta_wpa2_ent_set_cert_key(base + offsets.tls.userCert, sizes.tls.userCert,
 											base + offsets.tls.privateKey, sizes.tls.privateKey,
 											privateKeyPswd, sizes.tls.privateKeyPswd);
 		}
 		else if (wp.eap.protocol == EAPProtocol::EAP_PEAP_MSCHAPV2 || wp.eap.protocol == EAPProtocol::EAP_TTLS_MSCHAPV2)
 		{
-			esp_wifi_sta_wpa2_ent_clear_username();
 			esp_wifi_sta_wpa2_ent_set_username(base + offsets.peapttls.identity, sizes.peapttls.identity);
-
-			esp_wifi_sta_wpa2_ent_clear_password();
 			esp_wifi_sta_wpa2_ent_set_password(base + offsets.peapttls.password, sizes.peapttls.password);
 		}
 
