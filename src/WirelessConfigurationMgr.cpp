@@ -71,7 +71,8 @@ void WirelessConfigurationMgr::Init()
 	for(int i = 1; i < MaxRememberedNetworks; i++)
 	{
 		GetSsid(i, data);
-		if (data.ssid[0] == 0xFF)
+		nvs_iterator_t creds = nvs_entry_find(SSIDS_STORAGE_NAME, GetCredentialStorageName(i).c_str(), NVS_TYPE_ANY);
+		if (creds && IsSsidBlank(data))
 		{
 			EraseCredentials(i);
 		}
@@ -107,12 +108,17 @@ std::string WirelessConfigurationMgr::GetSsidKey(int ssid)
 	return std::to_string(ssid).c_str();
 }
 
+bool WirelessConfigurationMgr::IsSsidBlank(const WirelessConfigurationData& data)
+{
+	return (data.ssid[0] == 0xFF);
+}
+
 int WirelessConfigurationMgr::FindEmptySsidEntry()
 {
 	for (int i = MaxRememberedNetworks; i >= 0; i--)
 	{
 		WirelessConfigurationData d;
-		if (GetSsid(i, d) && d.ssid[0] == 0xFF)
+		if (GetSsid(i, d) && IsSsidBlank(d))
 		{
 			return i;
 		}
@@ -213,13 +219,19 @@ int WirelessConfigurationMgr::GetSsid(const char *ssid, WirelessConfigurationDat
 }
 
 #if SUPPORT_WPA2_ENTERPRISE
+
+std::string WirelessConfigurationMgr::GetCredentialStorageName(int ssid)
+{
+	std::string name = "creds_";
+	name.append(std::to_string(ssid));
+	return name;
+}
+
 nvs_handle_t WirelessConfigurationMgr::OpenCredentialStorage(int ssid, bool write)
 {
-	char ssidCredsNs[NVS_KEY_NAME_MAX_SIZE] = { 0 };
-	snprintf(ssidCredsNs, sizeof(ssidCredsNs), CREDS_STORAGE_NAME, ssid);
-
 	nvs_handle_t ssidCreds;
-	nvs_open_from_partition(SSIDS_STORAGE_NAME, ssidCredsNs, write ? NVS_READWRITE : NVS_READONLY, &ssidCreds);
+	nvs_open_from_partition(SSIDS_STORAGE_NAME, GetCredentialStorageName(ssid).c_str(),
+							write ? NVS_READWRITE : NVS_READONLY, &ssidCreds);
 
 	return ssidCreds;
 }

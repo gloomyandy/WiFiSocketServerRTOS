@@ -57,7 +57,6 @@ private:
 
 	static constexpr char SSIDS_STORAGE_NAME[] = "ssids";
 #if SUPPORT_WPA2_ENTERPRISE
-	static constexpr char CREDS_STORAGE_NAME[] = "creds_%d";
 	static constexpr char SCRATCH_STORAGE_NAME[] = "scratch";
 
 	static constexpr char SCRATCH_OFFSET_KEY[] = "offset";
@@ -76,6 +75,7 @@ private:
 	int pendingEnterpriseSsid;
 #endif
 
+	bool IsSsidBlank(const WirelessConfigurationData& data);
 	int FindEmptySsidEntry();
 
 	bool SetSsidData(int ssid, const WirelessConfigurationData& data);
@@ -85,6 +85,7 @@ private:
 	std::string GetSsidKey(int ssid);
 
 #if SUPPORT_WPA2_ENTERPRISE
+	std::string GetCredentialStorageName(int ssid);
 	std::string GetCredentialKey(int cred, int chunk);
 	nvs_handle_t OpenCredentialStorage(int ssid, bool write);
 	size_t GetCredential(int ssid, int cred, int chunk, void* buff, size_t sz);
