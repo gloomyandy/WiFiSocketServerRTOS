@@ -46,7 +46,7 @@ public:
 #if SUPPORT_WPA2_ENTERPRISE
 	bool BeginEnterpriseSsid(const WirelessConfigurationData &data);
 	bool SetEnterpriseCredential(int cred, const void* buff, size_t size);
-	bool EndEnterpriseSsid();
+	bool EndEnterpriseSsid(bool cancel);
 	const uint8_t* GetEnterpriseCredentials(int ssid, CredentialsInfo& offsets);
 #endif
 private:

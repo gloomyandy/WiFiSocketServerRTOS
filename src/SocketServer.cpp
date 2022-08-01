@@ -975,10 +975,10 @@ void IRAM_ATTR ProcessRequest()
 			{
 				static bool pending = false;
 
-				AddEnterpriseSsidFlag state = static_cast<AddEnterpriseSsidFlag>(messageHeaderIn.hdr.flags);
+				AddEnterpriseSsidFlag flag = static_cast<AddEnterpriseSsidFlag>(messageHeaderIn.hdr.flags);
 				messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
 
-				if (state == AddEnterpriseSsidFlag::SSID) // add ssid info
+				if (flag == AddEnterpriseSsidFlag::SSID) // add ssid info
 				{
 					if (messageHeaderIn.hdr.dataLength == sizeof(WirelessConfigurationData))
 					{
@@ -1014,7 +1014,7 @@ void IRAM_ATTR ProcessRequest()
 					}
 					else
 					{
-						if (state == AddEnterpriseSsidFlag::CREDENTIAL)
+						if (flag == AddEnterpriseSsidFlag::CREDENTIAL)
 						{
 							memset(transferBuffer, 0, sizeof(transferBuffer));
 							hspi.transferDwords(nullptr, transferBuffer, NumDwords(messageHeaderIn.hdr.dataLength));
@@ -1022,14 +1022,16 @@ void IRAM_ATTR ProcessRequest()
 							// messageHeaderIn.hdr.socketNumber holds credential ID.
 							wirelessConfigMgr->SetEnterpriseCredential(messageHeaderIn.hdr.socketNumber, transferBuffer, messageHeaderIn.hdr.dataLength);
 						}
-						else if (state == AddEnterpriseSsidFlag::COMMIT)
-						{
-							wirelessConfigMgr->EndEnterpriseSsid();
-							pending = false;
-						}
 						else
 						{
-							SendResponse(ResponseBadParameter);
+							// Cancel if the state is other than AddEnterpriseSsidFlag::COMMIT
+							wirelessConfigMgr->EndEnterpriseSsid(flag != AddEnterpriseSsidFlag::COMMIT);
+							pending = false;
+
+							if (!(flag == AddEnterpriseSsidFlag::COMMIT || flag == AddEnterpriseSsidFlag::CANCEL))
+							{
+								SendResponse(ResponseBadParameter);
+							}
 						}
 					}
 				}

@@ -177,6 +177,7 @@ enum class AddEnterpriseSsidFlag : uint8_t
 	SSID = 0,		// SSID info is sent
 	CREDENTIAL,		// Credentials for SSID are stored
 	COMMIT,			// SSID info is stored
+	CANCEL,			// Cancel the storage
 };
 
 struct WirelessConfigurationData

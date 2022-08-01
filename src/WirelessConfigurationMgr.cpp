@@ -409,9 +409,14 @@ bool WirelessConfigurationMgr::SetEnterpriseCredential(int cred, const void* buf
 	return false;
 }
 
-bool WirelessConfigurationMgr::EndEnterpriseSsid()
+bool WirelessConfigurationMgr::EndEnterpriseSsid(bool cancel = true)
 {
-	bool res = SetSsidData(pendingEnterpriseSsid, *pendingEnterpriseSsidData);
+	bool res = true;
+
+	if (!cancel)
+	{
+		res = SetSsidData(pendingEnterpriseSsid, *pendingEnterpriseSsidData);
+	}
 
 	free(pendingEnterpriseSsidData);
 	pendingEnterpriseSsidData = nullptr;
