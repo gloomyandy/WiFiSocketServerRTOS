@@ -118,7 +118,7 @@ int WirelessConfigurationMgr::FindEmptySsidEntry()
 	for (int i = MaxRememberedNetworks; i >= 0; i--)
 	{
 		WirelessConfigurationData d;
-		if (GetSsid(i, d) && IsSsidBlank(d))
+		if (GetSsid(i, d) && IsSsidBlank(d) && i != pendingEnterpriseSsid)
 		{
 			return i;
 		}
@@ -155,7 +155,7 @@ int WirelessConfigurationMgr::SetSsid(const WirelessConfigurationData& data, boo
 	WirelessConfigurationData d;
 
 	int ssid = WirelessConfigurationMgr::AP;
-	
+
 	if (!ap)
 	{
 		ssid = GetSsid(data.ssid, d);
@@ -370,26 +370,28 @@ void WirelessConfigurationMgr::EraseCredentials(int ssid)
 
 bool WirelessConfigurationMgr::BeginEnterpriseSsid(const WirelessConfigurationData &data)
 {
-	pendingEnterpriseSsidData = static_cast<WirelessConfigurationData*>(calloc(1, sizeof(data)));
-	memcpy(pendingEnterpriseSsidData, &data, sizeof(data));
-
 	// Personal network assumed unless otherwise stated. PSK is indicated by WirelessConfigurationData::eap.protocol == 1,
 	// which is the null terminator for the pre-shared key. Enforce that here.
 	static_assert(offsetof(WirelessConfigurationData, eap.protocol) ==
 					offsetof(WirelessConfigurationData,
-							password[sizeof(pendingEnterpriseSsidData->password) - sizeof(pendingEnterpriseSsidData->eap.protocol)]));
+							password[sizeof(data.password) - sizeof(data.eap.protocol)]));
 
-	WirelessConfigurationData stored;
-	pendingEnterpriseSsid = GetSsid(pendingEnterpriseSsidData->ssid, stored);
+	WirelessConfigurationData temp;
+	int newSsid = GetSsid(data.ssid, temp);
 
-	if (pendingEnterpriseSsid < 0)
+	if (newSsid < 0)
 	{
-		pendingEnterpriseSsid = FindEmptySsidEntry();
+		newSsid = FindEmptySsidEntry();
 	}
 
-	if (pendingEnterpriseSsid > 0)
+	if (newSsid > 0)
 	{
-		EraseCredentials(pendingEnterpriseSsid);
+		EraseCredentials(newSsid);
+
+		pendingEnterpriseSsidData = static_cast<WirelessConfigurationData*>(calloc(1, sizeof(data)));
+		memcpy(pendingEnterpriseSsidData, &data, sizeof(data));
+		pendingEnterpriseSsid = newSsid;
+
 		return true;
 	}
 
@@ -413,14 +415,24 @@ bool WirelessConfigurationMgr::EndEnterpriseSsid(bool cancel = true)
 {
 	bool res = true;
 
-	if (!cancel)
+	if (pendingEnterpriseSsid > 0)
 	{
-		res = SetSsidData(pendingEnterpriseSsid, *pendingEnterpriseSsidData);
-	}
+		if (!cancel)
+		{
+			res = SetSsidData(pendingEnterpriseSsid, *pendingEnterpriseSsidData);
+		}
 
-	free(pendingEnterpriseSsidData);
-	pendingEnterpriseSsidData = nullptr;
-	pendingEnterpriseSsid = -1;
+		if (cancel || !res)
+		{
+			// Delete the credentials written so far, since a reboot might
+			// be far off.
+			EraseCredentials(pendingEnterpriseSsid);
+		}
+
+		free(pendingEnterpriseSsidData);
+		pendingEnterpriseSsidData = nullptr;
+		pendingEnterpriseSsid = -1;
+	}
 
 	return res;
 }
