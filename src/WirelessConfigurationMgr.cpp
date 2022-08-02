@@ -286,7 +286,15 @@ void WirelessConfigurationMgr::ResetIfCredentialsLoaded(int ssid)
 	}
 }
 
-const uint8_t* WirelessConfigurationMgr::GetEnterpriseCredentials(int ssid, CredentialsInfo& offsets)
+void WirelessConfigurationMgr::GetCredentialSizes(int ssid, CredentialsInfo& sizes)
+{
+	nvs_handle_t creds = OpenCredentialStorage(ssid, false);
+	size_t sz = sizeof(sizes);
+	nvs_get_blob(creds, GetCredentialKey(CREDS_SIZES_KEY, 0).c_str(), &sizes, &sz);
+	nvs_close(creds);
+}
+
+const uint8_t* WirelessConfigurationMgr::GetEnterpriseCredentials(int ssid, CredentialsInfo& sizes, CredentialsInfo& offsets)
 {
 	uint32_t loadedSsid = 0;
 	nvs_get_u32(scratchStorage, LOADED_SSID_KEY, &loadedSsid);
@@ -298,10 +306,12 @@ const uint8_t* WirelessConfigurationMgr::GetEnterpriseCredentials(int ssid, Cred
 	WirelessConfigurationData data;
 	GetSsid(ssid, data);
 
+	GetCredentialSizes(ssid, sizes);
+
 	// Get the total size of credentials
-	const uint32_t *sizesArr = reinterpret_cast<const uint32_t*>(&data.eap.credsSizes);
+	const uint32_t *sizesArr = reinterpret_cast<const uint32_t*>(&sizes);
 	size_t totalSize = 0;
-	for(int cred = 0; cred < sizeof(data.eap.credsSizes)/sizeof(sizesArr[0]); cred++)
+	for(int cred = 0; cred < sizeof(sizes)/sizeof(sizesArr[0]); cred++)
 	{
 		totalSize += sizesArr[cred];
 	}
@@ -391,7 +401,7 @@ bool WirelessConfigurationMgr::BeginEnterpriseSsid(const WirelessConfigurationDa
 		pendingEnterpriseSsidData = static_cast<WirelessConfigurationData*>(calloc(1, sizeof(data)));
 		memcpy(pendingEnterpriseSsidData, &data, sizeof(data));
 		pendingEnterpriseSsid = newSsid;
-
+		pendingEnterpriseCredsSizes = static_cast<CredentialsInfo*>(calloc(1, sizeof(CredentialsInfo)));
 		return true;
 	}
 
@@ -400,12 +410,14 @@ bool WirelessConfigurationMgr::BeginEnterpriseSsid(const WirelessConfigurationDa
 
 bool WirelessConfigurationMgr::SetEnterpriseCredential(int cred, const void* buff, size_t size)
 {
-	uint32_t *credsSizes = reinterpret_cast<uint32_t*>(&(pendingEnterpriseSsidData->eap.credsSizes));
-
-	if (SetCredential(pendingEnterpriseSsid, cred, credsSizes[cred]/MaxCredentialChunkSize, buff, size))
+	if (pendingEnterpriseSsid > 0)
 	{
-		credsSizes[cred] += size;
-		return true;
+		uint32_t *credsSizes = reinterpret_cast<uint32_t*>(pendingEnterpriseCredsSizes);
+		if (SetCredential(pendingEnterpriseSsid, cred, credsSizes[cred]/MaxCredentialChunkSize, buff, size))
+		{
+			credsSizes[cred] += size;
+			return true;
+		}
 	}
 
 	return false;
@@ -419,7 +431,9 @@ bool WirelessConfigurationMgr::EndEnterpriseSsid(bool cancel = true)
 	{
 		if (!cancel)
 		{
-			res = SetSsidData(pendingEnterpriseSsid, *pendingEnterpriseSsidData);
+			res = SetCredential(pendingEnterpriseSsid, CREDS_SIZES_KEY, 0,
+				pendingEnterpriseCredsSizes, sizeof(CredentialsInfo)) &&
+				SetSsidData(pendingEnterpriseSsid, *pendingEnterpriseSsidData);
 		}
 
 		if (cancel || !res)
@@ -430,7 +444,9 @@ bool WirelessConfigurationMgr::EndEnterpriseSsid(bool cancel = true)
 		}
 
 		free(pendingEnterpriseSsidData);
+		free(pendingEnterpriseCredsSizes);
 		pendingEnterpriseSsidData = nullptr;
+		pendingEnterpriseCredsSizes = nullptr;
 		pendingEnterpriseSsid = -1;
 	}
 

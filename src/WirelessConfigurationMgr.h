@@ -47,7 +47,7 @@ public:
 	bool BeginEnterpriseSsid(const WirelessConfigurationData &data);
 	bool SetEnterpriseCredential(int cred, const void* buff, size_t size);
 	bool EndEnterpriseSsid(bool cancel);
-	const uint8_t* GetEnterpriseCredentials(int ssid, CredentialsInfo& offsets);
+	const uint8_t* GetEnterpriseCredentials(int ssid, CredentialsInfo& sizes, CredentialsInfo& offsets);
 #endif
 private:
 
@@ -61,6 +61,7 @@ private:
 
 	static constexpr char SCRATCH_OFFSET_KEY[] = "offset";
 	static constexpr char LOADED_SSID_KEY[] = "ssid";
+	static constexpr int  CREDS_SIZES_KEY = UINT8_MAX;
 #endif
 
 	static WirelessConfigurationMgr* instance;
@@ -73,6 +74,7 @@ private:
 	const uint8_t* scratchBase;
 	WirelessConfigurationData *pendingEnterpriseSsidData;
 	int pendingEnterpriseSsid;
+	CredentialsInfo *pendingEnterpriseCredsSizes;
 #endif
 
 	bool IsSsidBlank(const WirelessConfigurationData& data);
@@ -88,6 +90,7 @@ private:
 	std::string GetCredentialStorageName(int ssid);
 	std::string GetCredentialKey(int cred, int chunk);
 	nvs_handle_t OpenCredentialStorage(int ssid, bool write);
+	void GetCredentialSizes(int ssid, CredentialsInfo& sizes);
 	size_t GetCredential(int ssid, int cred, int chunk, void* buff, size_t sz);
 	void EraseCredentials(int ssid);
 

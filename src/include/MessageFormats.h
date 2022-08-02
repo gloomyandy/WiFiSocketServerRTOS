@@ -192,8 +192,7 @@ struct WirelessConfigurationData
 	union {
 		char password[PasswordLength];	// password for personal networks
 		struct {
-			CredentialsInfo credsSizes;
-			uint8_t dummy[PasswordLength - (sizeof(CredentialsInfo) + sizeof(EAPProtocol))];
+			uint8_t res[PasswordLength - (sizeof(EAPProtocol))];
 			EAPProtocol protocol;	// null terminator if PSK
 		} eap;
 	};

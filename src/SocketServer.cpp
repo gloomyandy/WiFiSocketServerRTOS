@@ -518,9 +518,9 @@ pre(currentState == WiFiState::idle)
 	if (wp.eap.protocol != EAPProtocol::NONE)
 	{
 		CredentialsInfo offsets;
-		CredentialsInfo& sizes = wp.eap.credsSizes;
+		CredentialsInfo sizes;
 
-		const uint8_t* base = wirelessConfigMgr->GetEnterpriseCredentials(currentSsid, offsets);
+		const uint8_t* base = wirelessConfigMgr->GetEnterpriseCredentials(currentSsid, sizes, offsets);
 
 		// Clear all previously set credentials
 		esp_wifi_sta_wpa2_ent_clear_identity();
