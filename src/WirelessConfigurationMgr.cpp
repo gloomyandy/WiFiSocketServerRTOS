@@ -118,7 +118,11 @@ int WirelessConfigurationMgr::FindEmptySsidEntry()
 	for (int i = MaxRememberedNetworks; i >= 0; i--)
 	{
 		WirelessConfigurationData d;
-		if (GetSsid(i, d) && IsSsidBlank(d) && i != pendingEnterpriseSsid)
+		if (GetSsid(i, d) && IsSsidBlank(d)
+#if SUPPORT_WPA2_ENTERPRISE
+			&& i != pendingEnterpriseSsid
+#endif
+		)
 		{
 			return i;
 		}
