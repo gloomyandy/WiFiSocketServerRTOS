@@ -23,7 +23,7 @@ Connection::Connection(uint8_t num)
 {
 }
 
-void IRAM_ATTR Connection::GetStatus(ConnStatusResponse& resp) const
+void Connection::GetStatus(ConnStatusResponse& resp) const
 {
 	resp.socketNumber = number;
 	resp.state = state;
@@ -82,7 +82,7 @@ void Connection::Terminate(bool external)
 }
 
 // Perform housekeeping tasks
-void IRAM_ATTR Connection::Poll()
+void Connection::Poll()
 {
 	if (state == ConnState::closeReady)
 	{
@@ -101,7 +101,7 @@ void IRAM_ATTR Connection::Poll()
 	}
 }
 
-void IRAM_ATTR Connection::PollRead()
+void Connection::PollRead()
 {
 	if (state == ConnState::connected || state == ConnState::otherEndClosed)
 	{
@@ -151,7 +151,7 @@ void IRAM_ATTR Connection::PollRead()
 // A further mitigation would be to restrict the amount of data we accept so some amount that will fit in the MSS, then tcp_write will need to allocate at most one PBUF.
 // However, another reason why tcp_write can fail is because MEMP_NUM_TCP_SEG is set too low in Lwip. It now appears that this is the maoin cause of files tcp_write
 // call in version 1.21. So I have increased it from 10 to 16, which seems to have fixed the problem..
-size_t IRAM_ATTR Connection::Write(const uint8_t *data, size_t length, bool doPush, bool closeAfterSending)
+size_t Connection::Write(const uint8_t *data, size_t length, bool doPush, bool closeAfterSending)
 {
 	if (state != ConnState::connected)
 	{
@@ -194,7 +194,7 @@ size_t IRAM_ATTR Connection::Write(const uint8_t *data, size_t length, bool doPu
 	return length;
 }
 
-size_t IRAM_ATTR Connection::CanWrite() const
+size_t Connection::CanWrite() const
 {
 	// Return the amount of free space in the write buffer
 	// Note: we cannot necessarily write this amount, because it depends on memory allocations being successful.
@@ -202,7 +202,7 @@ size_t IRAM_ATTR Connection::CanWrite() const
 		std::min((size_t)tcp_sndbuf(ownPcb->pcb.tcp), MaxDataLength) : 0;
 }
 
-size_t IRAM_ATTR Connection::Read(uint8_t *data, size_t length)
+size_t Connection::Read(uint8_t *data, size_t length)
 {
 	size_t lengthRead = 0;
 	if (pb != nullptr && length != 0 && (state == ConnState::connected || state == ConnState::otherEndClosed))
@@ -235,7 +235,7 @@ size_t IRAM_ATTR Connection::Read(uint8_t *data, size_t length)
 	return lengthRead;
 }
 
-size_t IRAM_ATTR Connection::CanRead() const
+size_t Connection::CanRead() const
 {
 	return ((state == ConnState::connected || state == ConnState::otherEndClosed) && pb != nullptr)
 			? pb->tot_len - readIndex : 0;
@@ -292,7 +292,7 @@ void Connection::FreePbuf()
 // Static functions
 
 
-/*static*/ void IRAM_ATTR Connection::PollAll()
+/*static*/ void Connection::PollAll()
 {
 	for(int i = 0; i < MaxConnections; i++) {
 		connectionList[i]->Poll();
