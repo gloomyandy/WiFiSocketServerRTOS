@@ -49,53 +49,57 @@ public:
 	bool EndEnterpriseSsid(bool cancel);
 	const uint8_t* GetEnterpriseCredentials(int ssid, CredentialsInfo& sizes, CredentialsInfo& offsets);
 #endif
+
 private:
-
-#if SUPPORT_WPA2_ENTERPRISE
-	WirelessConfigurationMgr() : pendingEnterpriseSsid(-1) {};
-#endif
-
-	static constexpr char SSIDS_STORAGE_NAME[] = "ssids";
-#if SUPPORT_WPA2_ENTERPRISE
-	static constexpr char SCRATCH_STORAGE_NAME[] = "scratch";
-
-	static constexpr char SCRATCH_OFFSET_KEY[] = "offset";
-	static constexpr char LOADED_SSID_KEY[] = "ssid";
-	static constexpr int  CREDS_SIZES_KEY = UINT8_MAX;
-#endif
-
 	static WirelessConfigurationMgr* instance;
 
-	nvs_handle_t ssidsStorage;
+	static constexpr char KVS_NAME[] = "kvs";
+	static constexpr char SSIDS_NS[] = "ssids";
+
 #if SUPPORT_WPA2_ENTERPRISE
-	nvs_handle_t scratchStorage;
-	const esp_partition_t* credsScratch;
+	static constexpr char SCRATCH_NS[] = "scratch";
+	static constexpr char CREDS_NS[] = "creds";
+
+	static constexpr char SCRATCH_OFFSET_ID[] = "offset";
+	static constexpr char LOADED_SSID_ID[] = "ssid";
+
+	static constexpr int  CREDS_SIZES_IDX = UINT8_MAX;
+	struct PendingEnterpriseSsid
+	{
+		int ssid;
+		WirelessConfigurationData data;
+		CredentialsInfo sizes;
+	};
 
 	const uint8_t* scratchBase;
-	WirelessConfigurationData *pendingEnterpriseSsidData;
-	int pendingEnterpriseSsid;
-	CredentialsInfo *pendingEnterpriseCredsSizes;
+	PendingEnterpriseSsid* pendingSsid;
 #endif
 
-	bool IsSsidBlank(const WirelessConfigurationData& data);
-	int FindEmptySsidEntry();
+	void InitKVS();
+	bool DeleteKV(std::string key);
+	bool SetKV(std::string key, const void *buff, size_t sz);
+	bool GetKV(std::string key, void* buff, size_t sz);
 
+	std::string GetSsidKey(int ssid);
 	bool SetSsidData(int ssid, const WirelessConfigurationData& data);
-	bool SetCredential(int ssid, int cred, int chunk, const void* buff, size_t sz);
 	bool EraseSsidData(int ssid);
 	bool EraseSsid(int ssid);
-	std::string GetSsidKey(int ssid);
 
 #if SUPPORT_WPA2_ENTERPRISE
-	std::string GetCredentialStorageName(int ssid);
-	std::string GetCredentialKey(int cred, int chunk);
-	nvs_handle_t OpenCredentialStorage(int ssid, bool write);
-	void GetCredentialSizes(int ssid, CredentialsInfo& sizes);
-	size_t GetCredential(int ssid, int cred, int chunk, void* buff, size_t sz);
-	void EraseCredentials(int ssid);
+	const esp_partition_t* GetScratchPartition();
+	std::string GetScratchKey(const char* name);
+	bool EraseScratch();
 
-	void ResetIfCredentialsLoaded(int ssid);
+	std::string GetCredentialKey(int ssid, int cred, int chunk);
+	bool SetCredential(int ssid, int cred, int chunk, const void* buff, size_t sz);
+	size_t GetCredential(int ssid, int cred, int chunk, void* buff, size_t sz);
+	bool GetCredentialSizes(int ssid, CredentialsInfo& sizes);
+	bool EraseCredentials(int ssid);
+	bool ResetIfCredentialsLoaded(int ssid);
 #endif
+
+	int FindEmptySsidEntry();
+	bool IsSsidBlank(const WirelessConfigurationData& data);
 };
 
 #endif /* SRC_WIFI_CONFIGURATION_MANAGER_H_ */
