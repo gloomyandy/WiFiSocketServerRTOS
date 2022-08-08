@@ -7,6 +7,10 @@
 
 #include "Config.h"
 
+#if ESP8266
+#include "esp8266/partition.h"
+#endif
+
 WirelessConfigurationMgr* WirelessConfigurationMgr::instance = nullptr;
 SemaphoreHandle_t WirelessConfigurationMgr::kvsLock = nullptr;
 
@@ -14,12 +18,10 @@ void WirelessConfigurationMgr::Init()
 {
 	InitKVS();
 
-#if SUPPORT_WPA2_ENTERPRISE
 	// Memory map the partition. The base pointer will be returned.
 	spi_flash_mmap_handle_t mapHandle;
 	const esp_partition_t* scratch = GetScratchPartition();
 	esp_partition_mmap(scratch, 0, scratch->size, SPI_FLASH_MMAP_DATA, reinterpret_cast<const void**>(&scratchBase), &mapHandle);
-#endif
 
 	WirelessConfigurationData temp;
 
@@ -54,7 +56,6 @@ void WirelessConfigurationMgr::Init()
 		}
 	}
 
-#if SUPPORT_WPA2_ENTERPRISE
 	// Check that the scratch partition is ready for writing. All bytes after the current
 	// offset must be 0xFF.
 	uint32_t offset = 0;
@@ -83,14 +84,11 @@ void WirelessConfigurationMgr::Init()
 			EraseCredentials(i);
 		}
 	}
-#endif
 }
 
 void WirelessConfigurationMgr::Reset()
 {
-#if SUPPORT_WPA2_ENTERPRISE
 	EraseScratch();
-#endif
 
 	// Reset storage and reset values to default.
 	// 	- the SSID slot must be reset to a blank value, and credentials for
@@ -154,12 +152,10 @@ bool WirelessConfigurationMgr::EraseSsid(int ssid)
 		//			the SSID will have already been cleared and thus erasure will
 		//			continue at reboot inside WirelessConfigurationMgr::Init()
 		res = EraseSsidData(ssid);
-#if SUPPORT_WPA2_ENTERPRISE
 		if (res)
 		{
 			res = EraseCredentials(ssid);
 		}
-#endif
 	}
 
 	return res;
@@ -195,7 +191,6 @@ int WirelessConfigurationMgr::GetSsid(const char *ssid, WirelessConfigurationDat
 	return -1;
 }
 
-#if SUPPORT_WPA2_ENTERPRISE
 bool WirelessConfigurationMgr::BeginEnterpriseSsid(const WirelessConfigurationData &data)
 {
 	// Personal network assumed unless otherwise stated. PSK is indicated by WirelessConfigurationData::eap.protocol == 1,
@@ -377,7 +372,6 @@ const uint8_t* WirelessConfigurationMgr::GetEnterpriseCredentials(int ssid, Cred
 
 	return res;
 }
-#endif
 
 void WirelessConfigurationMgr::LockKVS(fdb_db_t db)
 {
@@ -471,8 +465,6 @@ bool WirelessConfigurationMgr::EraseSsidData(int ssid)
 	return SetSsidData(ssid, clean);
 }
 
-
-#if SUPPORT_WPA2_ENTERPRISE
 const esp_partition_t* WirelessConfigurationMgr::GetScratchPartition()
 {
 	const esp_partition_t* part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, SCRATCH_NS);
@@ -594,7 +586,6 @@ bool WirelessConfigurationMgr::ResetIfCredentialsLoaded(int ssid)
 
 	return res;
 }
-#endif
 
 bool WirelessConfigurationMgr::IsSsidBlank(const WirelessConfigurationData& data)
 {
@@ -607,9 +598,7 @@ int WirelessConfigurationMgr::FindEmptySsidEntry()
 	{
 		WirelessConfigurationData d;
 		if (GetSsid(i, d) && IsSsidBlank(d)
-#if SUPPORT_WPA2_ENTERPRISE
 			&& (!pendingSsid || pendingSsid->ssid != i)
-#endif
 		)
 		{
 			return i;

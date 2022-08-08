@@ -1,0 +1,1 @@
+PROVIDE (_scratch_start = 0x402F0000);

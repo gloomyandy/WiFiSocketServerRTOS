@@ -23,8 +23,6 @@
 
 #include "flashdb.h"
 
-#define SUPPORT_WPA2_ENTERPRISE			(ESP32C3)
-
 class WirelessConfigurationMgr
 {
 public:
@@ -47,12 +45,10 @@ public:
 	bool GetSsid(int ssid, WirelessConfigurationData& data);
 	int GetSsid(const char* ssid, WirelessConfigurationData& data);
 
-#if SUPPORT_WPA2_ENTERPRISE
 	bool BeginEnterpriseSsid(const WirelessConfigurationData &data);
 	bool SetEnterpriseCredential(int cred, const void* buff, size_t size);
 	bool EndEnterpriseSsid(bool cancel);
 	const uint8_t* GetEnterpriseCredentials(int ssid, CredentialsInfo& sizes, CredentialsInfo& offsets);
-#endif
 
 private:
 	static WirelessConfigurationMgr* instance;
@@ -60,7 +56,6 @@ private:
 	static constexpr char KVS_NAME[] = "kvs";
 	static constexpr char SSIDS_NS[] = "ssids";
 
-#if SUPPORT_WPA2_ENTERPRISE
 	static constexpr char SCRATCH_NS[] = "scratch";
 	static constexpr char CREDS_NS[] = "creds";
 
@@ -77,7 +72,6 @@ private:
 
 	const uint8_t* scratchBase;
 	PendingEnterpriseSsid* pendingSsid;
-#endif
 
 	struct fdb_kvdb kvs;
 	static SemaphoreHandle_t kvsLock;
@@ -94,7 +88,6 @@ private:
 	bool EraseSsidData(int ssid);
 	bool EraseSsid(int ssid);
 
-#if SUPPORT_WPA2_ENTERPRISE
 	const esp_partition_t* GetScratchPartition();
 	std::string GetScratchKey(const char* name);
 	bool EraseScratch();
@@ -105,7 +98,6 @@ private:
 	bool GetCredentialSizes(int ssid, CredentialsInfo& sizes);
 	bool EraseCredentials(int ssid);
 	bool ResetIfCredentialsLoaded(int ssid);
-#endif
 
 	int FindEmptySsidEntry();
 	bool IsSsidBlank(const WirelessConfigurationData& data);

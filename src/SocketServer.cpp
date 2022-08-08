@@ -57,9 +57,7 @@ extern "C"
 #include "esp32c3/spi.h"
 #endif
 
-#if SUPPORT_WPA2_ENTERPRISE
 #include "esp_wpa2.h"
-#endif
 
 static const uint32_t MaxConnectTime = 40 * 1000;			// how long we wait for WiFi to connect in milliseconds
 static const uint32_t TransferReadyTimeout = 10;			// how many milliseconds we allow for the Duet to set
@@ -514,7 +512,7 @@ pre(currentState == WiFiState::idle)
 
 	esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
 
-#if SUPPORT_WPA2_ENTERPRISE
+#if ESP32C3
 	if (wp.eap.protocol != EAPProtocol::NONE)
 	{
 		CredentialsInfo offsets;
@@ -522,7 +520,14 @@ pre(currentState == WiFiState::idle)
 
 		const uint8_t* base = wirelessConfigMgr->GetEnterpriseCredentials(currentSsid, sizes, offsets);
 
+		if (base == nullptr)
+		{
+			lastError = "Failed to load credentials";
+			return;
+		}
+
 		// Clear all previously set credentials
+		esp_wifi_sta_wpa2_ent_disable();
 		esp_wifi_sta_wpa2_ent_clear_identity();
 		esp_wifi_sta_wpa2_ent_clear_ca_cert();
 		esp_wifi_sta_wpa2_ent_clear_cert_key();
@@ -557,7 +562,9 @@ pre(currentState == WiFiState::idle)
 			esp_wifi_sta_wpa2_ent_set_password(base + offsets.peapttls.password, sizes.peapttls.password);
 		}
 
+#if ESP32C3
 		esp_wifi_sta_wpa2_ent_set_ttls_phase2_method(ESP_EAP_TTLS_PHASE2_MSCHAPV2);
+#endif
 
 		esp_wifi_sta_wpa2_ent_enable();
 	}
@@ -970,7 +977,7 @@ void IRAM_ATTR ProcessRequest()
 			}
 			break;
 
-#if SUPPORT_WPA2_ENTERPRISE
+#if ESP32C3
 		case NetworkCommand::networkAddEnterpriseSsid:		// add an enterprise access point
 			{
 				static bool pending = false;
@@ -985,8 +992,8 @@ void IRAM_ATTR ProcessRequest()
 							EAPProtocol protocol = static_cast<EAPProtocol>(messageHeaderIn.hdr.socketNumber);
 
 							if (protocol != EAPProtocol::EAP_TTLS_MSCHAPV2 &&
-								protocol != EAPProtocol::EAP_PEAP_MSCHAPV2 &&
-								protocol != EAPProtocol::EAP_TLS)
+								protocol != EAPProtocol::EAP_PEAP_MSCHAPV2
+								&& protocol != EAPProtocol::EAP_TLS)
 							{
 								SendResponse(ResponseBadParameter);
 							}
