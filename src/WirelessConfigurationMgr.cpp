@@ -4,13 +4,11 @@
 
 #include "esp_system.h"
 #include "rom/ets_sys.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/semphr.h"
 
 #include "Config.h"
 
 WirelessConfigurationMgr* WirelessConfigurationMgr::instance = nullptr;
+SemaphoreHandle_t WirelessConfigurationMgr::kvsLock = nullptr;
 
 void WirelessConfigurationMgr::Init()
 {
@@ -381,6 +379,16 @@ const uint8_t* WirelessConfigurationMgr::GetEnterpriseCredentials(int ssid, Cred
 }
 #endif
 
+void WirelessConfigurationMgr::LockKVS(fdb_db_t db)
+{
+	xSemaphoreTake(kvsLock, portMAX_DELAY);
+}
+
+void WirelessConfigurationMgr::UnlockKVS(fdb_db_t db)
+{
+	xSemaphoreGive(kvsLock);
+}
+
 void WirelessConfigurationMgr::InitKVS()
 {
 	/**
@@ -391,7 +399,7 @@ void WirelessConfigurationMgr::InitKVS()
 	 * for enterprise network credentials, which can get huge. These credentials are loaded and assembled
 	 * from the key-value store in a wear-leveled fashion.
 	 *
-	 * The key-value store uses the SDK's NVS mechanism. They are used to store wireless configuration data,
+	 * The key-value store uses FlashDB. They are used to store wireless configuration data,
 	 * the credential chunks, and some other bits and pieces. There are three 'namespaces':
 	 * 		- ssids - stores wireless configuration data, with keys 'ssids/xx' where xx is the ssid slot
 	 * 		- creds - stores credential for a particular wireless config data stored in 'ssids', with keys
@@ -400,61 +408,42 @@ void WirelessConfigurationMgr::InitKVS()
 	 * 		- scratch - stores some values related to the scratch partition, with keys 'scratch_ss' where
 	 * 					ss is the string id
 	 **/
-	ESP_ERROR_CHECK(nvs_flash_init_partition(KVS_NAME));
 
+	kvsLock = xSemaphoreCreateCounting(1, 1);
+
+	fdb_kvdb_control(&kvs, FDB_KVDB_CTRL_SET_LOCK, reinterpret_cast<void*>(LockKVS));
+	fdb_kvdb_control(&kvs, FDB_KVDB_CTRL_SET_UNLOCK, reinterpret_cast<void*>(UnlockKVS));
+	fdb_kvdb_init(&kvs, "env", "fdb_kvdb1", NULL, NULL);
 }
 
 bool WirelessConfigurationMgr::DeleteKV(std::string key)
 {
-	nvs_handle_t storage;
-	esp_err_t res = nvs_open_from_partition(KVS_NAME, KVS_NAME, NVS_READWRITE, &storage);
-
-	if (res == ESP_OK)
-	{
-		res = nvs_erase_key(storage, key.c_str());
-
-		if (res == ESP_OK)
-		{
-			res = nvs_commit(storage);
-		}
-
-		nvs_close(storage);
-	}
-
-	return res == ESP_OK;
+	fdb_err_t err = fdb_kv_del(&kvs, key.c_str());
+	return err == FDB_NO_ERR;
 }
 
 bool WirelessConfigurationMgr::SetKV(std::string key, const void *buff, size_t sz)
 {
-	nvs_handle_t storage;
-	esp_err_t res = nvs_open_from_partition(KVS_NAME, KVS_NAME, NVS_READWRITE, &storage);
+	struct fdb_blob blob = {
+		const_cast<void*>(buff), // buf
+		sz, // size
+		0, 0, 0 // saved
+	};
 
-	if (res == ESP_OK) {
-		res = nvs_set_blob(storage, key.c_str(), buff, sz);
-
-		if (res == ESP_OK)
-		{
-			res = nvs_commit(storage);
-		}
-
-		nvs_close(storage);
-	}
-
-	return res == ESP_OK;
+	fdb_err_t err = fdb_kv_set_blob(&kvs, key.c_str(), &blob);
+	return err == FDB_NO_ERR;
 }
 
 bool WirelessConfigurationMgr::GetKV(std::string key, void* buff, size_t sz)
 {
-	nvs_handle_t storage;
-	esp_err_t res = nvs_open_from_partition(KVS_NAME, KVS_NAME, NVS_READONLY, &storage);
+	struct fdb_blob blob = {
+		const_cast<void*>(buff), // buf
+		sz, // size
+		0, 0, 0 // saved
+	};
 
-	if (res == ESP_OK)
-	{
-		res = nvs_get_blob(storage, key.c_str(), buff, &sz);
-		nvs_close(storage);
-	}
-
-	return res == ESP_OK;
+	fdb_kv_get_blob(&kvs, key.c_str(), &blob);
+	return blob.saved.len == sz;
 }
 
 std::string WirelessConfigurationMgr::GetSsidKey(int ssid)
@@ -464,7 +453,6 @@ std::string WirelessConfigurationMgr::GetSsidKey(int ssid)
 	res.append(std::to_string(ssid));
 	return res;
 }
-
 
 bool WirelessConfigurationMgr::SetSsidData(int ssid, const WirelessConfigurationData& data)
 {

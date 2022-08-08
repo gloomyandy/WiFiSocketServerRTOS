@@ -14,10 +14,14 @@
 
 #include "include/MessageFormats.h"
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_partition.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 
+#include "flashdb.h"
 
 #define SUPPORT_WPA2_ENTERPRISE			(ESP32C3)
 
@@ -75,7 +79,12 @@ private:
 	PendingEnterpriseSsid* pendingSsid;
 #endif
 
+	struct fdb_kvdb kvs;
+	static SemaphoreHandle_t kvsLock;
+
 	void InitKVS();
+	static void LockKVS(fdb_db_t db);
+	static void UnlockKVS(fdb_db_t db);
 	bool DeleteKV(std::string key);
 	bool SetKV(std::string key, const void *buff, size_t sz);
 	bool GetKV(std::string key, void* buff, size_t sz);
