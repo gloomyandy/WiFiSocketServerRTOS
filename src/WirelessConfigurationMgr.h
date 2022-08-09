@@ -95,7 +95,10 @@ private:
 	std::string GetCredentialKey(int ssid, int cred, int chunk);
 	bool SetCredential(int ssid, int cred, int chunk, const void* buff, size_t sz);
 	size_t GetCredential(int ssid, int cred, int chunk, void* buff, size_t sz);
+	bool DeleteCredential(int ssid, int cred, int chunk);
+	bool SetCredentialSizes(int ssid, const CredentialsInfo& sizes);
 	bool GetCredentialSizes(int ssid, CredentialsInfo& sizes);
+	bool DeleteCredentialSizes(int ssid);
 	bool EraseCredentials(int ssid);
 	bool ResetIfCredentialsLoaded(int ssid);
 

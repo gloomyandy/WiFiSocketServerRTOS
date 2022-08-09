@@ -75,11 +75,9 @@ void WirelessConfigurationMgr::Init()
 	// Storing an enterprise SSID might not have gone all the way.
 	// The SSID information is written last, after all of the credentials;
 	// so there might be orphaned credentials taking up space. Clear them here.
-	CredentialsInfo sizes;
-
 	for(int i = 1; i < MaxRememberedNetworks; i++)
 	{
-		if ((GetSsid(i, temp) && IsSsidBlank(temp)) && GetCredentialSizes(i, sizes))
+		if ((GetSsid(i, temp) && IsSsidBlank(temp)))
 		{
 			EraseCredentials(i);
 		}
@@ -229,10 +227,17 @@ bool WirelessConfigurationMgr::SetEnterpriseCredential(int cred, const void* buf
 	if (pendingSsid)
 	{
 		uint32_t *credsSizes = reinterpret_cast<uint32_t*>(&(pendingSsid->sizes));
-		if (SetCredential(pendingSsid->ssid, cred, credsSizes[cred]/MaxCredentialChunkSize, buff, size))
+
+		// Update the size first, in case the credential store does not come through.
+		size_t oldSize = credsSizes[cred];
+		credsSizes[cred] += size;
+
+		if (SetCredentialSizes(pendingSsid->ssid, pendingSsid->sizes))
 		{
-			credsSizes[cred] += size;
-			return true;
+			if (SetCredential(pendingSsid->ssid, cred, oldSize / MaxCredentialChunkSize, buff, size))
+			{
+				return true;
+			}
 		}
 	}
 
@@ -247,8 +252,7 @@ bool WirelessConfigurationMgr::EndEnterpriseSsid(bool cancel = true)
 	{
 		if (!cancel)
 		{
-			res = SetCredential(pendingSsid->ssid, CREDS_SIZES_IDX, 0,
-				&(pendingSsid->sizes), sizeof(pendingSsid->sizes)) &&
+			res = SetCredentialSizes(pendingSsid->ssid, pendingSsid->sizes) &&
 				SetSsidData(pendingSsid->ssid, pendingSsid->data);
 		}
 
@@ -418,26 +422,42 @@ bool WirelessConfigurationMgr::DeleteKV(std::string key)
 
 bool WirelessConfigurationMgr::SetKV(std::string key, const void *buff, size_t sz)
 {
-	struct fdb_blob blob = {
-		const_cast<void*>(buff), // buf
-		sz, // size
-		0, 0, 0 // saved
-	};
+	if (buff && sz)
+	{
+		struct fdb_blob blob = {
+			const_cast<void*>(buff), // buf
+			sz, // size
+			0, 0, 0 // saved
+		};
 
-	fdb_err_t err = fdb_kv_set_blob(&kvs, key.c_str(), &blob);
-	return err == FDB_NO_ERR;
+		fdb_err_t err = fdb_kv_set_blob(&kvs, key.c_str(), &blob);
+		return err == FDB_NO_ERR;
+	}
+
+	return false;
 }
 
 bool WirelessConfigurationMgr::GetKV(std::string key, void* buff, size_t sz)
 {
+	uint8_t temp;
 	struct fdb_blob blob = {
 		const_cast<void*>(buff), // buf
 		sz, // size
 		0, 0, 0 // saved
 	};
 
-	fdb_kv_get_blob(&kvs, key.c_str(), &blob);
-	return blob.saved.len == sz;
+	if (buff && sz)
+	{
+		blob.buf = buff;
+		blob.size = sz;
+	}
+	else
+	{
+		blob.buf = &temp;
+		blob.size = 1;
+	}
+
+	return fdb_kv_get_blob(&kvs, key.c_str(), &blob) >= sz && blob.saved.len;
 }
 
 std::string WirelessConfigurationMgr::GetSsidKey(int ssid)
@@ -525,38 +545,66 @@ size_t WirelessConfigurationMgr::GetCredential(int ssid, int cred, int chunk, vo
 	return GetKV(GetCredentialKey(ssid, cred, chunk), buff, sz) ? sz : 0;
 }
 
+bool WirelessConfigurationMgr::DeleteCredential(int ssid, int cred, int chunk)
+{
+	return DeleteKV(GetCredentialKey(ssid, cred, chunk));
+}
+
+bool WirelessConfigurationMgr::SetCredentialSizes(int ssid, const CredentialsInfo& sizes)
+{
+	return SetKV(GetCredentialKey(ssid, CREDS_SIZES_IDX), &sizes, sizeof(sizes));
+}
+
 bool WirelessConfigurationMgr::GetCredentialSizes(int ssid, CredentialsInfo& sizes)
 {
 	return GetKV(GetCredentialKey(ssid, CREDS_SIZES_IDX), &sizes, sizeof(sizes));
 }
 
+bool WirelessConfigurationMgr::DeleteCredentialSizes(int ssid)
+{
+	return DeleteKV(GetCredentialKey(ssid, CREDS_SIZES_IDX));
+}
+
 bool WirelessConfigurationMgr::EraseCredentials(int ssid)
 {
-	bool res = ResetIfCredentialsLoaded(ssid);
+	CredentialsInfo sizes;
 
-	if (res)
+	bool res = true;
+
+	// Check first if the credential sizes exist, which is stored/updated
+	// before writing any credential.
+	if (GetCredentialSizes(ssid, sizes))
 	{
-		CredentialsInfo sizes;
-		memset(&sizes, 0, sizeof(sizes));
+		res = ResetIfCredentialsLoaded(ssid);
 
-		// The blob might not exist yet
-		if (GetKV(GetCredentialKey(ssid, CREDS_SIZES_IDX), &sizes, sizeof(sizes)))
+		if (res)
 		{
 			const uint32_t *sizesArr = reinterpret_cast<const uint32_t*>(&sizes);
 
-			for(int cred = 0; cred < sizeof(CredentialsInfo)/ sizeof(sizesArr[0]); cred++)
+			for(int cred = 0; res && cred < sizeof(CredentialsInfo)/ sizeof(sizesArr[0]); cred++)
 			{
 				int chunks = (sizesArr[cred] + (MaxCredentialChunkSize - 1)) / MaxCredentialChunkSize;
-				for(int chunk = chunks - 1; res && chunk >= 0; chunk--)
+
+				// Find the first chunk not yet deleted and start from there.
+				int chunk  = chunks - 1;
+				for(; chunk >= 0; chunk--)
 				{
-					res = DeleteKV(GetCredentialKey(ssid, cred, chunk));
+					if (GetKV(GetCredentialKey(ssid, cred, chunk), nullptr, 0))
+					{
+						break;
+					}
+				}
+
+				for(; res && chunk >= 0; chunk--)
+				{
+					res = DeleteCredential(ssid, cred, chunk);
 				}
 			}
 
+			// Only delete the sizes chunk once all the chunks have been deleted
 			if (res)
 			{
-				// Only delete the sizes chunk once all the chunks have been deleted
-				res = DeleteKV(GetCredentialKey(ssid, CREDS_SIZES_IDX));
+				res = DeleteCredentialSizes(ssid);
 			}
 		}
 	}
