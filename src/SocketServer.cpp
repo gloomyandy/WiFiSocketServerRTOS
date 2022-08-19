@@ -926,15 +926,15 @@ void IRAM_ATTR ProcessRequest()
 					break;
 				}
 
-				uint8_t WiFiPhyMode = 0;
-				esp_wifi_get_protocol(WIFI_IF_STA, &WiFiPhyMode);
+				uint8_t EspWiFiPhyMode = 0;
+				esp_wifi_get_protocol(WIFI_IF_STA, &EspWiFiPhyMode);
 
-				if (WiFiPhyMode | WIFI_PROTOCOL_11N) {
-					response->phyMode = static_cast<int>(WiFiPhyMode::N);
-				} else if (WiFiPhyMode | WIFI_PROTOCOL_11G) {
-					response->phyMode = static_cast<int>(WiFiPhyMode::G);
-				} else if (WiFiPhyMode | WIFI_PROTOCOL_11B) {
-					response->phyMode = static_cast<int>(WiFiPhyMode::B);
+				if (EspWiFiPhyMode | WIFI_PROTOCOL_11N) {
+					response->phyMode = static_cast<int>(EspWiFiPhyMode::N);
+				} else if (EspWiFiPhyMode | WIFI_PROTOCOL_11G) {
+					response->phyMode = static_cast<int>(EspWiFiPhyMode::G);
+				} else if (EspWiFiPhyMode | WIFI_PROTOCOL_11B) {
+					response->phyMode = static_cast<int>(EspWiFiPhyMode::B);
 				}
 
 				response->zero1 = 0;
@@ -1153,11 +1153,11 @@ void IRAM_ATTR ProcessRequest()
 						d.rssi = ap.rssi;
 
 						if (ap.phy_11n) {
-							d.phymode = WiFiPhyMode::N;
+							d.phymode = EspWiFiPhyMode::N;
 						} else if (ap.phy_11g) {
-							d.phymode = WiFiPhyMode::G;
+							d.phymode = EspWiFiPhyMode::G;
 						} else if (ap.phy_11b) {
-							d.phymode = WiFiPhyMode::B;
+							d.phymode = EspWiFiPhyMode::B;
 						}
 
 						switch (ap.authmode)

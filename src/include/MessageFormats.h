@@ -90,7 +90,7 @@ struct MessageHeaderSamToEsp
 };
 
 
-enum class WiFiPhyMode {
+enum class EspWiFiPhyMode {
 	B = 1,
 	G = 2,
 	N = 3,
@@ -114,7 +114,7 @@ enum class WiFiAuth
 struct WiFiScanData
 {
 	int8_t rssi;	/* signal strength from -100 to 0 in dB */
-	WiFiPhyMode phymode;
+	EspWiFiPhyMode phymode;
 	WiFiAuth auth;
 	char ssid[SsidLength + 1];
 };
