@@ -433,10 +433,9 @@ pre(currentState == WiFiState::idle)
 	WirelessConfigurationData wp;
 	esp_wifi_stop();
 
-	ConfigureSTAMode();
-
 	if (ssid == nullptr || ssid[0] == 0)
 	{
+		ConfigureSTAMode();
 		esp_wifi_start();
 
 		wifi_scan_config_t cfg;
@@ -444,9 +443,9 @@ pre(currentState == WiFiState::idle)
 		cfg.show_hidden = true;
 
 		esp_err_t res = esp_wifi_scan_start(&cfg, true);
-		esp_wifi_stop();
 
 		if (res != ESP_OK) {
+			esp_wifi_stop();
 			lastError = "network scan failed";
 			return;
 		}
@@ -457,6 +456,7 @@ pre(currentState == WiFiState::idle)
 		wifi_ap_record_t *ap_records = (wifi_ap_record_t*) calloc(num_ssids, sizeof(wifi_ap_record_t));
 
 		esp_wifi_scan_get_ap_records(&num_ssids, ap_records);
+		esp_wifi_stop();
 
 		// Find the strongest network that we know about
 		int8_t strongestNetwork = -1;
@@ -501,6 +501,8 @@ pre(currentState == WiFiState::idle)
 
 		currentSsid = idx;
 	}
+
+	ConfigureSTAMode();
 
 	wifi_config_t wifi_config;
 	memset(&wifi_config, 0, sizeof(wifi_config));
@@ -589,7 +591,6 @@ pre(currentState == WiFiState::idle)
 	} else {
 		tcpip_adapter_dhcpc_start(TCPIP_ADAPTER_IF_STA);
 	}
-
 
 	esp_wifi_start();
 
