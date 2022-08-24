@@ -49,7 +49,7 @@ void WirelessConfigurationMgr::Init()
 	// 					ss is the string id
 	//
 	esp_vfs_spiffs_conf_t conf = {
-		.base_path = "/kvs",
+		.base_path = KVS_PATH,
 		.partition_label = NULL,
 		.max_files = 1,
 		.format_if_mount_failed = true
@@ -59,13 +59,15 @@ void WirelessConfigurationMgr::Init()
 
 	// Memory map the partition, remembering the base pointer for the lifetime of the app.
 	spi_flash_mmap_handle_t mapHandle;
-	scratchPartition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, SCRATCH_NS);
+	scratchPartition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, SCRATCH_DIR);
 	esp_partition_mmap(scratchPartition, 0, scratchPartition->size, SPI_FLASH_MMAP_DATA,
 						reinterpret_cast<const void**>(&scratchBase), &mapHandle);
 
+	char key[MAX_KEY_LEN] = { 0 };
+
 	// Check if first time and the storage should be initialized. The marker here is SSID slot 0,
 	// since WirelessConfigurationMgr::Reset works it's way backwards to it.
-	if (!GetKV(GetSsidKey(0), nullptr, 0))
+	if (!GetKV(GetSsidKey(key, 0), nullptr, 0))
 	{
 		debugPrintf("initializing SSID storage...");
 		Reset();
@@ -191,17 +193,18 @@ bool WirelessConfigurationMgr::EraseSsid(const char *ssid)
 	return EraseSsid(GetSsid(ssid, temp));
 }
 
-bool WirelessConfigurationMgr::GetSsid(int ssid, WirelessConfigurationData& data)
+bool WirelessConfigurationMgr::GetSsid(int ssid, WirelessConfigurationData& data) const
 {
 	if (ssid <= MaxRememberedNetworks)
 	{
-		return GetKV(GetSsidKey(ssid), &data, sizeof(data));
+		char key[MAX_KEY_LEN] = { 0 };
+		return GetKV(GetSsidKey(key, ssid), &data, sizeof(data));
 	}
 
 	return false;
 }
 
-int WirelessConfigurationMgr::GetSsid(const char *ssid, WirelessConfigurationData& data)
+int WirelessConfigurationMgr::GetSsid(const char *ssid, WirelessConfigurationData& data) const
 {
 	if (ssid)
 	{
@@ -270,7 +273,8 @@ bool WirelessConfigurationMgr::SetEnterpriseCredential(int cred, const void* buf
 
 		if (newSize <= pendingSsid->data.eap.credSizes.asArr[cred])
 		{
-			if(SetKV(GetCredentialKey(pendingSsid->ssid, cred), buff, size, pendingSsid->sizes.asArr[cred]))
+			char key[MAX_KEY_LEN] = { 0 };
+			if(SetKV(GetCredentialKey(key, pendingSsid->ssid, cred), buff, size, pendingSsid->sizes.asArr[cred]))
 			{
 				pendingSsid->sizes.asArr[cred] = newSize;
 				return true;
@@ -332,8 +336,10 @@ const uint8_t* WirelessConfigurationMgr::GetEnterpriseCredentials(int ssid, cons
 	// be retrieved.
 	uint32_t loadedSsid = 0, baseOffset = 0;
 
-	if (GetKV(GetScratchKey(LOADED_SSID_ID), &loadedSsid, sizeof(loadedSsid)) &&
-		GetKV(GetScratchKey(SCRATCH_OFFSET_ID), &baseOffset, sizeof(baseOffset)))
+	char key[MAX_KEY_LEN] = { 0 };
+
+	if (GetKV(GetScratchKey(key, LOADED_SSID_ID), &loadedSsid, sizeof(loadedSsid)) &&
+		GetKV(GetScratchKey(key, SCRATCH_OFFSET_ID), &baseOffset, sizeof(baseOffset)))
 	{
 		// Get the total size of credentials
 		size_t totalSize = 0;
@@ -366,7 +372,7 @@ const uint8_t* WirelessConfigurationMgr::GetEnterpriseCredentials(int ssid, cons
 			}
 
 			uint32_t newOffset = baseOffset + actualSize;
-			bool ok = SetKV(GetScratchKey(SCRATCH_OFFSET_ID), &newOffset, sizeof(newOffset));
+			bool ok = SetKV(GetScratchKey(key, SCRATCH_OFFSET_ID), &newOffset, sizeof(newOffset));
 
 			if (ok)
 			{
@@ -388,7 +394,7 @@ const uint8_t* WirelessConfigurationMgr::GetEnterpriseCredentials(int ssid, cons
 							memset(buff, 0, MaxCredentialChunkSize);
 
 							sz = (remain >= MaxCredentialChunkSize) ? MaxCredentialChunkSize : remain;
-							if (GetKV(GetCredentialKey(ssid, cred), buff, sz, pos))
+							if (GetKV(GetCredentialKey(key, ssid, cred), buff, sz, pos))
 							{
 								esp_err_t err = esp_partition_write(scratchPartition, baseOffset + offset, buff, sz);
 								ok = (err == ESP_OK);
@@ -405,7 +411,7 @@ const uint8_t* WirelessConfigurationMgr::GetEnterpriseCredentials(int ssid, cons
 					if (ok)
 					{
 						loadedSsid = ssid;
-						ok = SetKV(GetScratchKey(LOADED_SSID_ID), &loadedSsid, sizeof(loadedSsid));
+						ok = SetKV(GetScratchKey(key, LOADED_SSID_ID), &loadedSsid, sizeof(loadedSsid));
 
 						if (ok)
 						{
@@ -420,33 +426,31 @@ const uint8_t* WirelessConfigurationMgr::GetEnterpriseCredentials(int ssid, cons
 	return res;
 }
 
-bool WirelessConfigurationMgr::DeleteKV(std::string key)
+bool WirelessConfigurationMgr::DeleteKV(const char *key)
 {
-	std::string path = "/kvs/";
-	path.append(key);
-
-	// Faster than actually deleting the file, for the cost
-	// of a few more bytes maintaing the empty file.
-	int f = open(path.c_str(), O_WRONLY | O_TRUNC | O_CREAT);
-
-	if (f >= 0)
+	if (key)
 	{
-		close(f);
-		return true;
+		// Faster than actually deleting the file, for the cost
+		// of a few more bytes maintaing the empty file.
+		int f = open(key, O_WRONLY | O_TRUNC | O_CREAT);
+
+		if (f >= 0)
+		{
+			close(f);
+			return true;
+		}
 	}
 
 	return false;
 }
 
-bool WirelessConfigurationMgr::SetKV(std::string key, const void *buff, size_t sz, bool append)
+bool WirelessConfigurationMgr::SetKV(const char *key, const void *buff, size_t sz, bool append)
 {
-	if (buff && sz)
+	if (key && buff && sz)
 	{
-		std::string path = "/kvs/";
 		errno = 0;
-		path.append(key);
 
-		int f = open(path.c_str(), O_WRONLY | (append ? O_APPEND : O_CREAT | O_TRUNC));
+		int f = open(key, O_WRONLY | (append ? O_APPEND : O_CREAT | O_TRUNC));
 
 		if (f >= 0)
 		{
@@ -459,33 +463,34 @@ bool WirelessConfigurationMgr::SetKV(std::string key, const void *buff, size_t s
 	return false;
 }
 
-bool WirelessConfigurationMgr::GetKV(std::string key, void* buff, size_t sz, size_t pos)
+bool WirelessConfigurationMgr::GetKV(const char *key, void* buff, size_t sz, size_t pos) const
 {
-	std::string path = "/kvs/";
-	errno = 0;
-	path.append(key);
-
-	int f = open(path.c_str(), O_RDONLY);
-
-	if (f >= 0)
+	if (key)
 	{
-		bool res = true;
+		errno = 0;
 
-		// If buff == NULL or sz == 0, this command is only used to check
-		// if the particular key exists. Therefore, do nothing
-		// but close the opened file.
-		if (buff && sz)
+		int f = open(key, O_RDONLY);
+
+		if (f >= 0)
 		{
-			res = (lseek(f, pos, SEEK_SET) == pos);
+			bool res = true;
 
-			if (res)
+			// If buff == NULL or sz == 0, this command is only used to check
+			// if the particular key exists. Therefore, do nothing
+			// but close the opened file.
+			if (buff && sz)
 			{
-				res = (read(f, buff, sz) == sz);
-			}
-		}
+				res = (lseek(f, pos, SEEK_SET) == pos);
 
-		close(f);
-		return res;
+				if (res)
+				{
+					res = (read(f, buff, sz) == sz);
+				}
+			}
+
+			close(f);
+			return res;
+		}
 	}
 
 	return false;
@@ -498,19 +503,18 @@ size_t WirelessConfigurationMgr::FreeKV()
 	return (ret == ESP_OK && used < total) ? total - used : 0;
 }
 
-std::string WirelessConfigurationMgr::GetSsidKey(int ssid)
+const char* WirelessConfigurationMgr::GetSsidKey(char *buff, int ssid)
 {
-	std::string res = SSIDS_NS;
-	res.append("/");
-	res.append(std::to_string(ssid));
-	return res;
+	int res = snprintf(buff, MAX_KEY_LEN, "%s/%s/%u", KVS_PATH, SSIDS_DIR, ssid);
+	return res > 0 && res < MAX_KEY_LEN ? buff : nullptr;
 }
 
 bool WirelessConfigurationMgr::SetSsidData(int ssid, const WirelessConfigurationData& data)
 {
 	if (ssid <= MaxRememberedNetworks)
 	{
-		return SetKV(GetSsidKey(ssid), &data, sizeof(data));
+		char key[MAX_KEY_LEN] = { 0 };
+		return SetKV(GetSsidKey(key, ssid), &data, sizeof(data));
 	}
 
 	return false;
@@ -523,12 +527,10 @@ bool WirelessConfigurationMgr::EraseSsidData(int ssid)
 	return SetSsidData(ssid, clean);
 }
 
-std::string WirelessConfigurationMgr::GetScratchKey(const char* name)
+const char* WirelessConfigurationMgr::GetScratchKey(char *buff, int id)
 {
-	std::string res = SCRATCH_NS;
-	res.append("/");
-	res.append(name);
-	return res;
+	int res = snprintf(buff, MAX_KEY_LEN, "%s/%s/%u", KVS_PATH, SCRATCH_DIR, id);
+	return res > 0 && res < MAX_KEY_LEN ? buff : nullptr;
 }
 
 bool WirelessConfigurationMgr::EraseScratch()
@@ -541,37 +543,35 @@ bool WirelessConfigurationMgr::EraseScratch()
 
 	if (err == ESP_OK)
 	{
+		char key[MAX_KEY_LEN] = { 0 };
 		uint32_t zero = 0;
-		return SetKV(GetScratchKey(LOADED_SSID_ID), &zero, sizeof(zero)) &&
-				SetKV(GetScratchKey(SCRATCH_OFFSET_ID), &zero, sizeof(zero));
+		return SetKV(GetScratchKey(key, LOADED_SSID_ID), &zero, sizeof(zero)) &&
+				SetKV(GetScratchKey(key, SCRATCH_OFFSET_ID), &zero, sizeof(zero));
 	}
 
 	return false;
 }
 
-std::string WirelessConfigurationMgr::GetCredentialKey(int ssid, int cred)
+const char* WirelessConfigurationMgr::GetCredentialKey(char *buff, int ssid, int cred)
 {
-	std::string res = CREDS_NS;
-	res.append("/");
-	res.append(std::to_string(ssid));
-	res.append("/");
-	res.append(std::to_string(cred));
-	return res;
+	int res = snprintf(buff, MAX_KEY_LEN, "%s/%s/%u/%u", KVS_PATH, CREDS_DIR, ssid, cred);
+	return res > 0 && res < MAX_KEY_LEN ? buff : nullptr;
 }
 
 bool WirelessConfigurationMgr::EraseCredential(int ssid, int cred)
 {
 	bool res = true;
+	char key[MAX_KEY_LEN] = { 0 };
 
 	if (cred >= 0 && cred < sizeof(CredentialsInfo) / sizeof(uint32_t))
 	{
-		res = DeleteKV(GetCredentialKey(ssid, cred));
+		res = DeleteKV(GetCredentialKey(key, ssid, cred));
 	}
 	else if (cred < 0)
 	{
 		for(int cred = sizeof(CredentialsInfo) / sizeof(uint32_t) - 1; res && cred >= 0; cred--)
 		{
-			res = DeleteKV(GetCredentialKey(ssid, cred));
+			res = DeleteKV(GetCredentialKey(key, ssid, cred));
 		}
 	}
 	else
@@ -585,16 +585,17 @@ bool WirelessConfigurationMgr::EraseCredential(int ssid, int cred)
 bool WirelessConfigurationMgr::ResetIfCredentialsLoaded(int ssid)
 {
 	bool res = false;
+	char key[MAX_KEY_LEN] = { 0 };
 
 	uint32_t loadedSsid = 0;
-	res = GetKV(GetScratchKey(LOADED_SSID_ID), &loadedSsid, sizeof(loadedSsid));
+	res = GetKV(GetScratchKey(key, LOADED_SSID_ID), &loadedSsid, sizeof(loadedSsid));
 
 	if (res) // loadedSsid value has to be valid
 	{
 		if (loadedSsid == ssid) // if the ssid in question is not loaded, do nothing
 		{
 			loadedSsid = 0;
-			res = SetKV(GetScratchKey(LOADED_SSID_ID), &loadedSsid, sizeof(loadedSsid));
+			res = SetKV(GetScratchKey(key, LOADED_SSID_ID), &loadedSsid, sizeof(loadedSsid));
 		}
 	}
 
@@ -606,7 +607,7 @@ bool WirelessConfigurationMgr::IsSsidBlank(const WirelessConfigurationData& data
 	return (data.ssid[0] == 0xFF);
 }
 
-int WirelessConfigurationMgr::FindEmptySsidEntry()
+int WirelessConfigurationMgr::FindEmptySsidEntry() const
 {
 	for (int i = MaxRememberedNetworks; i >= 0; i--)
 	{

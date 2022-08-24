@@ -962,9 +962,9 @@ void ProcessRequest()
 			{
 				messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
 				hspi.transferDwords(nullptr, transferBuffer, NumDwords(sizeof(WirelessConfigurationData)));
-				WirelessConfigurationData *receivedClientData = reinterpret_cast<WirelessConfigurationData *>(transferBuffer);
+				const WirelessConfigurationData *receivedClientData = reinterpret_cast<const WirelessConfigurationData *>(transferBuffer);
 
-				int ssid = wirelessConfigMgr->SetSsid(*receivedClientData,
+				const int ssid = wirelessConfigMgr->SetSsid(*receivedClientData,
 							messageHeaderIn.hdr.command == NetworkCommand::networkConfigureAccessPoint);
 
 				if (ssid < 0)

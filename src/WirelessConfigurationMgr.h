@@ -8,6 +8,7 @@
 #ifndef SRC_WIFI_CONFIGURATION_MANAGER_H_
 #define SRC_WIFI_CONFIGURATION_MANAGER_H_
 
+#include <array>
 #include <string>
 #include <stdint.h>
 #include <stdlib.h>
@@ -38,8 +39,8 @@ public:
 
 	int SetSsid(const WirelessConfigurationData& data, bool ap);
 	bool EraseSsid(const char *ssid);
-	bool GetSsid(int ssid, WirelessConfigurationData& data);
-	int GetSsid(const char* ssid, WirelessConfigurationData& data);
+	bool GetSsid(int ssid, WirelessConfigurationData& data) const;
+	int GetSsid(const char* ssid, WirelessConfigurationData& data) const;
 
 	bool BeginEnterpriseSsid(const WirelessConfigurationData &data);
 	bool SetEnterpriseCredential(int cred, const void* buff, size_t size);
@@ -49,16 +50,17 @@ public:
 private:
 	static WirelessConfigurationMgr* instance;
 
-	static constexpr char KVS_NAME[] = "kvs";
-	static constexpr char SSIDS_NS[] = "ssids";
+	static constexpr char KVS_PATH[] = "/kvs";
+	static constexpr char SSIDS_DIR[] = "ssids";
 
-	static constexpr char SCRATCH_NS[] = "scratch";
-	static constexpr char CREDS_NS[] = "creds";
+	static constexpr char SCRATCH_DIR[] = "scratch";
+	static constexpr char CREDS_DIR[] = "creds";
 
-	static constexpr char SCRATCH_OFFSET_ID[] = "offset";
-	static constexpr char LOADED_SSID_ID[] = "ssid";
+	static constexpr int SCRATCH_OFFSET_ID = 0;
+	static constexpr int LOADED_SSID_ID = 1;
 
-	static constexpr int  CREDS_SIZES_IDX = UINT8_MAX;
+	static constexpr int MAX_KEY_LEN = 32;
+
 	struct PendingEnterpriseSsid
 	{
 		int ssid;
@@ -71,25 +73,25 @@ private:
 
 	PendingEnterpriseSsid* pendingSsid;
 
-	bool DeleteKV(std::string key);
-	bool SetKV(std::string key, const void *buff, size_t sz, bool append = false);
-	bool GetKV(std::string key, void* buff, size_t sz, size_t pos = 0);
+	bool DeleteKV(const char *key);
+	bool SetKV(const char *key, const void *buff, size_t sz, bool append = false);
+	bool GetKV(const char *key, void* buff, size_t sz, size_t pos = 0) const;
 	size_t FreeKV();
 
-	std::string GetSsidKey(int ssid);
+	static const char* GetSsidKey(char *buff, int ssid);
 	bool SetSsidData(int ssid, const WirelessConfigurationData& data);
 	bool EraseSsidData(int ssid);
 	bool EraseSsid(int ssid);
 
-	std::string GetScratchKey(const char* name);
+	static const char* GetScratchKey(char *buff, int id);
 	bool EraseScratch();
 
-	std::string GetCredentialKey(int ssid, int cred);
+	static const char* GetCredentialKey(char* buff, int ssid, int cred);
 	bool EraseCredential(int ssid, int cred = -1);
 	bool ResetIfCredentialsLoaded(int ssid);
 
-	int FindEmptySsidEntry();
-	bool IsSsidBlank(const WirelessConfigurationData& data);
+	int FindEmptySsidEntry() const;
+	static bool IsSsidBlank(const WirelessConfigurationData& data);
 };
 
 #endif /* SRC_WIFI_CONFIGURATION_MANAGER_H_ */
