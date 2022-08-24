@@ -97,6 +97,10 @@ void WirelessConfigurationMgr::Init()
 		}
 	}
 
+#if ESP32C3
+	esp_spiffs_check(conf.partition_label);
+#endif
+
 	// Storing an enterprise SSID and its credentials might not have
 	// gone all the way. Since credentials are stored first before the
 	// SSID data, if credentials are incompletely stored due to a power loss,
