@@ -71,7 +71,7 @@ enum class NetworkCommand : uint8_t
 	// Added at version 2.0
 	networkStartScan,           // start a scan for APs the module can connect to
 	networkGetScanResult,       // get the results of the previously started scan
-	networkAddEnterpriseSsid,	// add an enterprise ssid or its credentials
+	networkAddEnterpriseSsid,	// add an enterprise ssid and its credentials
 };
 
 // Message header sent from the SAM to the ESP
@@ -168,8 +168,7 @@ enum class EAPProtocol : uint8_t
 	NONE = 0,
 	EAP_TLS,
 	EAP_PEAP_MSCHAPV2,
-	EAP_TTLS_MSCHAPV2,
-	UNSUPPORTED = UINT8_MAX
+	EAP_TTLS_MSCHAPV2
 };
 
 enum class AddEnterpriseSsidFlag : uint8_t

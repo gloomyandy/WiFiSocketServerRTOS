@@ -565,6 +565,11 @@ pre(currentState == WiFiState::idle)
 			esp_wifi_sta_wpa2_ent_set_username(base + offsets.asMemb.peapttls.identity, sizes.asMemb.peapttls.identity);
 			esp_wifi_sta_wpa2_ent_set_password(base + offsets.asMemb.peapttls.password, sizes.asMemb.peapttls.password);
 		}
+		else
+		{
+			lastError = "Invalid 802.1x protocol";
+			return;
+		}
 
 #if ESP32C3
 		esp_wifi_sta_wpa2_ent_set_ttls_phase2_method(ESP_EAP_TTLS_PHASE2_MSCHAPV2);
@@ -991,16 +996,12 @@ void ProcessRequest()
 						{
 							EAPProtocol protocol = static_cast<EAPProtocol>(messageHeaderIn.hdr.socketNumber);
 
-							if (protocol != EAPProtocol::EAP_TTLS_MSCHAPV2 &&
-								protocol != EAPProtocol::EAP_PEAP_MSCHAPV2
+							if (protocol == EAPProtocol::EAP_TTLS_MSCHAPV2 ||
+								protocol == EAPProtocol::EAP_PEAP_MSCHAPV2
 #if ESP32C3
-								&& protocol != EAPProtocol::EAP_TLS
+								|| protocol == EAPProtocol::EAP_TLS
 #endif
 								)
-							{
-								SendResponse(ResponseBadParameter);
-							}
-							else
 							{
 								messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
 								hspi.transferDwords(nullptr, transferBuffer, NumDwords(sizeof(WirelessConfigurationData)));
@@ -1016,6 +1017,10 @@ void ProcessRequest()
 								{
 									lastError = "SSID table full";
 								}
+							}
+							else
+							{
+								SendResponse(ResponseBadParameter);
 							}
 						}
 						else
@@ -1042,7 +1047,7 @@ void ProcessRequest()
 							if (!wirelessConfigMgr->SetEnterpriseCredential(messageHeaderIn.hdr.socketNumber,
 									transferBuffer, messageHeaderIn.hdr.dataLength))
 							{
-								lastError = "enterprise credential save failed";
+								pending = false;
 							}
 						}
 						else
@@ -1054,19 +1059,21 @@ void ProcessRequest()
 					{
 						if (flag == AddEnterpriseSsidFlag::COMMIT || flag == AddEnterpriseSsidFlag::CANCEL)
 						{
-							if (flag == AddEnterpriseSsidFlag::CANCEL || pending)
+							bool cancel = (flag == AddEnterpriseSsidFlag::CANCEL);
+
+							if (cancel || pending)
 							{
 								messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
+								bool ok = wirelessConfigMgr->EndEnterpriseSsid(flag == AddEnterpriseSsidFlag::CANCEL);
 								pending = false;
-								if (!wirelessConfigMgr->EndEnterpriseSsid(flag != AddEnterpriseSsidFlag::COMMIT) ||
-									flag == AddEnterpriseSsidFlag::CANCEL)
+
+								if (!ok || cancel)
 								{
 									lastError = "enterprise SSID not saved";
 								}
 							}
 							else
 							{
-								// If a commit is requested, there has to be something to commit.
 								SendResponse(ResponseWrongState);
 							}
 						}

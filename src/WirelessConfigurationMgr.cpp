@@ -1,11 +1,10 @@
 #include "WirelessConfigurationMgr.h"
 
-#include <array>
+#include <cstdlib>
 #include <cstring>
 #include <sys/fcntl.h>
+#include <sys/unistd.h>
 
-#include "esp_system.h"
-#include "rom/ets_sys.h"
 #include "esp_spiffs.h"
 
 #include "Config.h"
@@ -16,19 +15,12 @@
 
 WirelessConfigurationMgr* WirelessConfigurationMgr::instance = nullptr;
 
-static uint32_t round2SecSz(uint32_t val)
+static inline uint32_t round2SecSz(uint32_t val)
 {
 	static_assert(SPI_FLASH_SEC_SIZE && ((SPI_FLASH_SEC_SIZE & (SPI_FLASH_SEC_SIZE - 1)) == 0));
-	
 	// If val is already a multiple of SPI_FLASH_SEC_SIZE, return itself;
 	// else return next multiple.
-
-	uint32_t res = val;
-	if (val % SPI_FLASH_SEC_SIZE != 0)
-	{
-		res = (val + (SPI_FLASH_SEC_SIZE - 1)) & ~(SPI_FLASH_SEC_SIZE - 1);
-	}
-	return res;
+	return (val + (SPI_FLASH_SEC_SIZE - 1)) & ~(SPI_FLASH_SEC_SIZE - 1);
 }
 
 void WirelessConfigurationMgr::Init()
@@ -85,10 +77,10 @@ void WirelessConfigurationMgr::Init()
 			esp_partition_read(oldSsids, 0, buff, eepromSizeNeeded);
 
 			WirelessConfigurationData *data = reinterpret_cast<WirelessConfigurationData*>(buff);
-			for (int i = MaxRememberedNetworks; i >= 0; i--) {
-				WirelessConfigurationData *d = &(data[i]);
-				if (d->ssid[0] != 0xFF) {
-					SetSsidData(i, *d);
+			for (int ssid = MaxRememberedNetworks; ssid >= 0; ssid--) {
+				WirelessConfigurationData *temp = &(data[ssid]);
+				if (temp->ssid[0] != 0xFF) {
+					SetSsidData(ssid, *temp);
 				}
 			}
 
@@ -105,12 +97,12 @@ void WirelessConfigurationMgr::Init()
 	// gone all the way. Since credentials are stored first before the
 	// SSID data, if credentials are incompletely stored due to a power loss,
 	// we can detect and clean up those orphaned credentials here.
-	for (int i = MaxRememberedNetworks; i > 0; i--)
+	for (int ssid = MaxRememberedNetworks; ssid > 0; ssid--)
 	{
 		WirelessConfigurationData temp;
-		if ((GetSsid(i, temp) && IsSsidBlank(temp)))
+		if ((GetSsid(ssid, temp) && IsSsidBlank(temp)))
 		{
-			EraseCredential(i);
+			EraseCredential(ssid);
 		}
 	}
 }
@@ -125,15 +117,15 @@ void WirelessConfigurationMgr::Reset()
 	//
 	// Work down to SSID slot 0, since it is used to detect whether
 	// the KVS has been initialized for the first time.
-	EraseScratch();
+	ResetScratch();
 
-	for (int i = MaxRememberedNetworks; i >= 0; i--)
+	for (int ssid = MaxRememberedNetworks; ssid >= 0; ssid--)
 	{
 		// Erase the SSID first, then the credentials. This is because if
 		// erasure of credentials is incomplete, if the corresponding
 		// SSID has been cleared first, then it can be erased at startup
-		EraseSsid(i);
-		EraseCredential(i);
+		EraseSsid(ssid);
+		EraseCredential(ssid);
 	}
 }
 
@@ -177,14 +169,11 @@ int WirelessConfigurationMgr::SetSsid(const WirelessConfigurationData& data, boo
 
 bool WirelessConfigurationMgr::EraseSsid(int ssid)
 {
-	if (ssid >= 0)
+	if (ResetIfCredentialsLoaded(ssid))
 	{
-		if (ResetIfCredentialsLoaded(ssid))
+		if (EraseSsidData(ssid))
 		{
-			if (EraseSsidData(ssid))
-			{
-				return true;
-			}
+			return true;
 		}
 	}
 
@@ -199,13 +188,8 @@ bool WirelessConfigurationMgr::EraseSsid(const char *ssid)
 
 bool WirelessConfigurationMgr::GetSsid(int ssid, WirelessConfigurationData& data) const
 {
-	if (ssid <= MaxRememberedNetworks)
-	{
-		char key[MAX_KEY_LEN] = { 0 };
-		return GetKV(GetSsidKey(key, ssid), &data, sizeof(data));
-	}
-
-	return false;
+	char key[MAX_KEY_LEN] = { 0 };
+	return GetKV(GetSsidKey(key, ssid), &data, sizeof(data));
 }
 
 int WirelessConfigurationMgr::GetSsid(const char *ssid, WirelessConfigurationData& data) const
@@ -236,12 +220,12 @@ bool WirelessConfigurationMgr::BeginEnterpriseSsid(const WirelessConfigurationDa
 	// Check if the credentials will fit
 	size_t total = 0;
 
-	for(uint32_t sz : data.eap.credSizes.asArr)
+	for (uint32_t sz : data.eap.credSizes.asArr)
 	{
 		total += sz;
 	}
 
-	if (total <= FreeKV() && total <= scratchPartition->size)
+	if (total < GetFree() && total < scratchPartition->size)
 	{
 		WirelessConfigurationData temp;
 		int ssid = GetSsid(data.ssid, temp);
@@ -278,7 +262,7 @@ bool WirelessConfigurationMgr::SetEnterpriseCredential(int cred, const void* buf
 		if (newSize <= pendingSsid->data.eap.credSizes.asArr[cred])
 		{
 			char key[MAX_KEY_LEN] = { 0 };
-			if(SetKV(GetCredentialKey(key, pendingSsid->ssid, cred), buff, size, pendingSsid->sizes.asArr[cred]))
+			if (SetKV(GetCredentialKey(key, pendingSsid->ssid, cred), buff, size, pendingSsid->sizes.asArr[cred]))
 			{
 				pendingSsid->sizes.asArr[cred] = newSize;
 				return true;
@@ -289,19 +273,23 @@ bool WirelessConfigurationMgr::SetEnterpriseCredential(int cred, const void* buf
 	return false;
 }
 
-bool WirelessConfigurationMgr::EndEnterpriseSsid(bool cancel = true)
+bool WirelessConfigurationMgr::EndEnterpriseSsid(bool cancel)
 {
-	bool ok = false;
+	bool ok = cancel;
 
 	if (pendingSsid)
 	{
-		if (!cancel)
+		if (cancel)
+		{
+			EraseCredential(pendingSsid->ssid);
+		}
+		else
 		{
 			// Make sure that the sizes sent at the beginning matches
 			// what we have received.
 			ok = true;
 
-			for(int cred = 0; ok && cred < sizeof(CredentialsInfo) / sizeof(uint32_t); cred++)
+			for (int cred = 0; ok && cred < ARRAY_SIZE(pendingSsid->sizes.asArr); cred++)
 			{
 				ok = ((pendingSsid->data.eap.credSizes.asArr[cred] == pendingSsid->sizes.asArr[cred]));
 
@@ -319,10 +307,6 @@ bool WirelessConfigurationMgr::EndEnterpriseSsid(bool cancel = true)
 			{
 				EraseCredential(pendingSsid->ssid);
 			}
-		}
-		else
-		{
-			ok = EraseCredential(pendingSsid->ssid);
 		}
 
 		free(pendingSsid);
@@ -385,12 +369,11 @@ const uint8_t* WirelessConfigurationMgr::GetEnterpriseCredentials(int ssid, cons
 				if (ok)
 				{
 					// Store offsets from the base offset
-					uint32_t *offsetsArr = reinterpret_cast<uint32_t*>(&offsets);
 					uint8_t *buff = static_cast<uint8_t*>(malloc(MaxCredentialChunkSize));
 
-					for(int cred = 0, offset = 0; ok && cred < sizeof(offsets)/sizeof(offsetsArr[0]); cred++)
+					for(int cred = 0, offset = 0; ok && cred < ARRAY_SIZE(offsets.asArr); cred++)
 					{
-						offsetsArr[cred] = offset;
+						offsets.asArr[cred] = offset;
 
 						for(int sz = 0, pos = 0, remain = sizes.asArr[cred];
 							ok && remain > 0; remain -= sz, offset += sz, pos += sz)
@@ -398,14 +381,11 @@ const uint8_t* WirelessConfigurationMgr::GetEnterpriseCredentials(int ssid, cons
 							memset(buff, 0, MaxCredentialChunkSize);
 
 							sz = (remain >= MaxCredentialChunkSize) ? MaxCredentialChunkSize : remain;
-							if (GetKV(GetCredentialKey(key, ssid, cred), buff, sz, pos))
+							ok = GetKV(GetCredentialKey(key, ssid, cred), buff, sz, pos);
+
+							if (ok)
 							{
-								esp_err_t err = esp_partition_write(scratchPartition, baseOffset + offset, buff, sz);
-								ok = (err == ESP_OK);
-							}
-							else
-							{
-								ok = false;
+								ok = (esp_partition_write(scratchPartition, baseOffset + offset, buff, sz) == ESP_OK);
 							}
 						}
 					}
@@ -452,8 +432,6 @@ bool WirelessConfigurationMgr::SetKV(const char *key, const void *buff, size_t s
 {
 	if (key && buff && sz)
 	{
-		errno = 0;
-
 		int f = open(key, O_WRONLY | (append ? O_APPEND : O_CREAT | O_TRUNC));
 
 		if (f >= 0)
@@ -471,8 +449,6 @@ bool WirelessConfigurationMgr::GetKV(const char *key, void* buff, size_t sz, siz
 {
 	if (key)
 	{
-		errno = 0;
-
 		int f = open(key, O_RDONLY);
 
 		if (f >= 0)
@@ -500,7 +476,7 @@ bool WirelessConfigurationMgr::GetKV(const char *key, void* buff, size_t sz, siz
 	return false;
 }
 
-size_t WirelessConfigurationMgr::FreeKV()
+size_t WirelessConfigurationMgr::GetFree()
 {
 	size_t total = 0, used = 0;
 	esp_err_t ret = esp_spiffs_info(NULL, &total, &used);
@@ -509,19 +485,20 @@ size_t WirelessConfigurationMgr::FreeKV()
 
 const char* WirelessConfigurationMgr::GetSsidKey(char *buff, int ssid)
 {
-	int res = snprintf(buff, MAX_KEY_LEN, "%s/%s/%u", KVS_PATH, SSIDS_DIR, ssid);
-	return res > 0 && res < MAX_KEY_LEN ? buff : nullptr;
+	int res = 0;
+
+	if (buff && ssid >= 0 && ssid <= MaxRememberedNetworks)
+	{
+		res = snprintf(buff, MAX_KEY_LEN, "%s/%s/%d", KVS_PATH, SSIDS_DIR, ssid);
+	}
+
+	return (res > 0 && res < MAX_KEY_LEN) ? buff : nullptr;
 }
 
 bool WirelessConfigurationMgr::SetSsidData(int ssid, const WirelessConfigurationData& data)
 {
-	if (ssid <= MaxRememberedNetworks)
-	{
-		char key[MAX_KEY_LEN] = { 0 };
-		return SetKV(GetSsidKey(key, ssid), &data, sizeof(data));
-	}
-
-	return false;
+	char key[MAX_KEY_LEN] = { 0 };
+	return SetKV(GetSsidKey(key, ssid), &data, sizeof(data));
 }
 
 bool WirelessConfigurationMgr::EraseSsidData(int ssid)
@@ -533,73 +510,74 @@ bool WirelessConfigurationMgr::EraseSsidData(int ssid)
 
 const char* WirelessConfigurationMgr::GetScratchKey(char *buff, int id)
 {
-	int res = snprintf(buff, MAX_KEY_LEN, "%s/%s/%u", KVS_PATH, SCRATCH_DIR, id);
-	return res > 0 && res < MAX_KEY_LEN ? buff : nullptr;
-}
+	int res = 0;
 
-bool WirelessConfigurationMgr::EraseScratch()
-{
-	// Erase the scratch partition first, then the scratch key-value pairs.
-	// The reason for this is that if the scratch partition is interrupted
-	// and does not reach the current offset, the memory from the current
-	// offset will still be valid to write to.
-	esp_err_t err = esp_partition_erase_range(scratchPartition, 0, scratchPartition->size);
-
-	if (err == ESP_OK)
+	if (buff && id >= 0)
 	{
-		char key[MAX_KEY_LEN] = { 0 };
-		uint32_t zero = 0;
-		return SetKV(GetScratchKey(key, LOADED_SSID_ID), &zero, sizeof(zero)) &&
-				SetKV(GetScratchKey(key, SCRATCH_OFFSET_ID), &zero, sizeof(zero));
+		res = snprintf(buff, MAX_KEY_LEN, "%s/%s/%d", KVS_PATH, SCRATCH_DIR, id);
 	}
 
-	return false;
+	return (res > 0 && res < MAX_KEY_LEN) ? buff : nullptr;
+}
+
+bool WirelessConfigurationMgr::ResetScratch()
+{
+	char key[MAX_KEY_LEN] = { 0 };
+	uint32_t zero = 0;
+	return SetKV(GetScratchKey(key, LOADED_SSID_ID), &zero, sizeof(zero)) &&
+			SetKV(GetScratchKey(key, SCRATCH_OFFSET_ID), &zero, sizeof(zero));
 }
 
 const char* WirelessConfigurationMgr::GetCredentialKey(char *buff, int ssid, int cred)
 {
-	int res = snprintf(buff, MAX_KEY_LEN, "%s/%s/%u/%u", KVS_PATH, CREDS_DIR, ssid, cred);
-	return res > 0 && res < MAX_KEY_LEN ? buff : nullptr;
+	int res = 0;
+
+	if (buff && (ssid >= 0 && ssid <= MaxRememberedNetworks) &&
+		(cred >= 0 && cred < ARRAY_SIZE(pendingSsid->sizes.asArr)))
+	{
+		res = snprintf(buff, MAX_KEY_LEN, "%s/%s/%d/%d", KVS_PATH, CREDS_DIR, ssid, cred);
+	}
+
+	return (res > 0 && res < MAX_KEY_LEN) ? buff : nullptr;
 }
 
-bool WirelessConfigurationMgr::EraseCredential(int ssid, int cred)
+bool WirelessConfigurationMgr::EraseCredential(int ssid)
 {
 	bool res = true;
 	char key[MAX_KEY_LEN] = { 0 };
 
-	if (cred >= 0 && cred < sizeof(CredentialsInfo) / sizeof(uint32_t))
+	for (int cred = 0; res && cred < ARRAY_SIZE(pendingSsid->sizes.asArr); cred++)
 	{
 		res = DeleteKV(GetCredentialKey(key, ssid, cred));
-	}
-	else if (cred < 0)
-	{
-		for(int cred = sizeof(CredentialsInfo) / sizeof(uint32_t) - 1; res && cred >= 0; cred--)
-		{
-			res = DeleteKV(GetCredentialKey(key, ssid, cred));
-		}
-	}
-	else
-	{
-		res = false;
 	}
 
 	return res;
 }
 
+bool WirelessConfigurationMgr::EraseCredential(int ssid, int cred)
+{
+	char key[MAX_KEY_LEN] = { 0 };
+	return DeleteKV(GetCredentialKey(key, ssid, cred));
+}
+
 bool WirelessConfigurationMgr::ResetIfCredentialsLoaded(int ssid)
 {
 	bool res = false;
-	char key[MAX_KEY_LEN] = { 0 };
 
-	uint32_t loadedSsid = 0;
-	res = GetKV(GetScratchKey(key, LOADED_SSID_ID), &loadedSsid, sizeof(loadedSsid));
-
-	if (res) // loadedSsid value has to be valid
+	if (ssid >= 0 && ssid <= MaxRememberedNetworks)
 	{
-		if (loadedSsid == ssid) // if the ssid in question is not loaded, do nothing
+		char key[MAX_KEY_LEN] = { 0 };
+
+		uint32_t loadedSsid = 0;
+		res = GetKV(GetScratchKey(key, LOADED_SSID_ID), &loadedSsid, sizeof(loadedSsid));
+
+		if (res) // loadedSsid value has to be valid
 		{
-			loadedSsid = 0;
-			res = SetKV(GetScratchKey(key, LOADED_SSID_ID), &loadedSsid, sizeof(loadedSsid));
+			if (loadedSsid == ssid) // if the ssid in question is not loaded, do nothing
+			{
+				loadedSsid = 0;
+				res = SetKV(GetScratchKey(key, LOADED_SSID_ID), &loadedSsid, sizeof(loadedSsid));
+			}
 		}
 	}
 
@@ -613,14 +591,14 @@ bool WirelessConfigurationMgr::IsSsidBlank(const WirelessConfigurationData& data
 
 int WirelessConfigurationMgr::FindEmptySsidEntry() const
 {
-	for (int i = MaxRememberedNetworks; i >= 0; i--)
+	for (int ssid = MaxRememberedNetworks; ssid >= 0; ssid--)
 	{
-		WirelessConfigurationData d;
-		if (GetSsid(i, d) && IsSsidBlank(d)
-			&& (!pendingSsid || pendingSsid->ssid != i)
+		WirelessConfigurationData data;
+		if (GetSsid(ssid, data) && IsSsidBlank(data)
+			&& (!pendingSsid || pendingSsid->ssid != ssid)
 		)
 		{
-			return i;
+			return ssid;
 		}
 	}
 

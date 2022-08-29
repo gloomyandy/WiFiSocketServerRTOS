@@ -8,16 +8,10 @@
 #ifndef SRC_WIFI_CONFIGURATION_MANAGER_H_
 #define SRC_WIFI_CONFIGURATION_MANAGER_H_
 
-#include <array>
-#include <string>
-#include <stdint.h>
-#include <stdlib.h>
+#include <cstdint>
+#include <cstddef>
 
 #include "include/MessageFormats.h"
-
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/semphr.h"
 #include "esp_partition.h"
 
 class WirelessConfigurationMgr
@@ -76,7 +70,7 @@ private:
 	bool DeleteKV(const char *key);
 	bool SetKV(const char *key, const void *buff, size_t sz, bool append = false);
 	bool GetKV(const char *key, void* buff, size_t sz, size_t pos = 0) const;
-	size_t FreeKV();
+	size_t GetFree();
 
 	static const char* GetSsidKey(char *buff, int ssid);
 	bool SetSsidData(int ssid, const WirelessConfigurationData& data);
@@ -84,10 +78,11 @@ private:
 	bool EraseSsid(int ssid);
 
 	static const char* GetScratchKey(char *buff, int id);
-	bool EraseScratch();
+	bool ResetScratch();
 
 	static const char* GetCredentialKey(char* buff, int ssid, int cred);
-	bool EraseCredential(int ssid, int cred = -1);
+	bool EraseCredential(int ssid, int cred);
+	bool EraseCredential(int ssid);
 	bool ResetIfCredentialsLoaded(int ssid);
 
 	int FindEmptySsidEntry() const;
