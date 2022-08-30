@@ -77,15 +77,8 @@ const uint8_t Backlog = 8;
 #define LISTEN_PRIO								(ESP_TASK_TCPIP_PRIO)
 #define DNS_SERVER_PRIO							(ESP_TASK_MAIN_PRIO)
 
-
-#if ESP8266
-#define CONN_POLL_STACK							(1252)
-#define LISTEN_STACK							(476)
-#define DNS_SERVER_STACK						(508)
-#elif ESP32C3
-#define CONN_POLL_STACK							(2048)
-#define LISTEN_STACK							(768)
-#define DNS_SERVER_STACK						(768)
-#endif
+#define CONN_POLL_STACK							(1492)
+#define LISTEN_STACK							(592)
+#define DNS_SERVER_STACK						(592)
 
 #endif
