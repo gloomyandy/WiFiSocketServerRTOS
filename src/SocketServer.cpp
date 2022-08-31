@@ -240,7 +240,6 @@ void ConnectToAccessPoint()
 	esp_event_post(WIFI_EVENT_EXT, WIFI_EVENT_STA_CONNECTING, NULL, 0, portMAX_DELAY);
 }
 
-
 void ConnectPoll(void* data)
 {
 	constexpr led_indicator_blink_type_t ONBOARD_LED_CONNECTING = BLINK_PROVISIONING;
@@ -517,6 +516,16 @@ pre(currentState == WiFiState::idle)
 
 	esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
 
+	// Clear all credentials, even if requested network is not WPA2-Enterprise.
+	// Without this, connection to the same WPA2-Enterprise network with
+	// PSK credentials will succeed.
+	esp_wifi_sta_wpa2_ent_disable();
+	esp_wifi_sta_wpa2_ent_clear_identity();
+	esp_wifi_sta_wpa2_ent_clear_ca_cert();
+	esp_wifi_sta_wpa2_ent_clear_cert_key();
+	esp_wifi_sta_wpa2_ent_clear_username();
+	esp_wifi_sta_wpa2_ent_clear_password();
+
 	if (wp.eap.protocol != EAPProtocol::NONE)
 	{
 		CredentialsInfo offsets;
@@ -529,14 +538,6 @@ pre(currentState == WiFiState::idle)
 			lastError = "Failed to load credentials";
 			return;
 		}
-
-		// Clear all previously set credentials
-		esp_wifi_sta_wpa2_ent_disable();
-		esp_wifi_sta_wpa2_ent_clear_identity();
-		esp_wifi_sta_wpa2_ent_clear_ca_cert();
-		esp_wifi_sta_wpa2_ent_clear_cert_key();
-		esp_wifi_sta_wpa2_ent_clear_username();
-		esp_wifi_sta_wpa2_ent_clear_password();
 
 		if (sizes.asMemb.anonymousId)
 		{
