@@ -50,11 +50,11 @@ extern "C"
 #include "Misc.h"
 #include "Config.h"
 
-#if ESP8266
+#ifdef ESP8266
 #include "esp8266/spi.h"
 #include "esp8266/gpio.h"
 #else
-#include "esp32c3/spi.h"
+#include "esp32/spi.h"
 #endif
 
 #include "esp_wpa2.h"
@@ -572,7 +572,7 @@ pre(currentState == WiFiState::idle)
 			return;
 		}
 
-#if ESP32C3
+#ifndef ESP8266
 		esp_wifi_sta_wpa2_ent_set_ttls_phase2_method(ESP_EAP_TTLS_PHASE2_MSCHAPV2);
 #endif
 
@@ -864,7 +864,7 @@ void ProcessRequest()
 					response->resetReason = 3; // Software watchdog
 					break;
 				case ESP_RST_SW:
-#if ESP8266
+#ifdef ESP8266
 				case ESP_RST_FAST_SW:
 #endif
 					response->resetReason = 4; // Software-initiated reset
@@ -943,9 +943,9 @@ void ProcessRequest()
 
 				response->zero1 = 0;
 				response->zero2 = 0;
-#if ESP8266
+#ifdef ESP8266
 				response->vcc = esp_wifi_get_vdd33();
-#elif ESP32C3
+#else
 				response->vcc = 0;
 #endif
 				WirelessConfigurationData wp;
@@ -953,10 +953,10 @@ void ProcessRequest()
 				SafeStrncpy(response->versionText, firmwareVersion, sizeof(response->versionText));
 				SafeStrncpy(response->hostName, webHostName, sizeof(response->hostName));
 				SafeStrncpy(response->ssid, wp.ssid, sizeof(response->ssid));
-#if ESP8266
-				response->clockReg = REG(SPI_CLOCK(HSPI));
-#elif ESP32C3
-				response->clockReg = SPI_LL_GET_HW(HSPI)->clock.val;
+#ifdef ESP8266
+				response->clockReg = REG(SPI_CLOCK(MSPI));
+#else
+				response->clockReg = SPI_LL_GET_HW(MSPI)->clock.val;
 #endif
 				SendResponse(sizeof(NetworkStatusResponse));
 			}
@@ -999,7 +999,7 @@ void ProcessRequest()
 
 							if (protocol == EAPProtocol::EAP_TTLS_MSCHAPV2 ||
 								protocol == EAPProtocol::EAP_PEAP_MSCHAPV2
-#if ESP32C3
+#ifndef ESP8266
 								|| protocol == EAPProtocol::EAP_TLS
 #endif
 								)
@@ -1276,7 +1276,7 @@ void ProcessRequest()
 							d.auth = WiFiAuth::WPA2_WPA3_PSK;
 							break;
 
-#if ESP32C3
+#ifndef ESP8266
 						case WIFI_AUTH_WAPI_PSK:
 							d.auth = WiFiAuth::WAPI_PSK;
 							break;
