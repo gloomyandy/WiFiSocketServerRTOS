@@ -81,8 +81,8 @@ private:
 	bool ResetScratch();
 
 	static const char* GetCredentialKey(char* buff, int ssid, int cred);
-	bool EraseCredential(int ssid, int cred);
-	bool EraseCredential(int ssid);
+	bool DeleteCredential(int ssid, int cred);
+	bool DeleteCredentials(int ssid);
 	bool ResetIfCredentialsLoaded(int ssid);
 
 	int FindEmptySsidEntry() const;

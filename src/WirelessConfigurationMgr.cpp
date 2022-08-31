@@ -96,7 +96,7 @@ void WirelessConfigurationMgr::Init()
 		WirelessConfigurationData temp;
 		if ((GetSsid(ssid, temp) && IsSsidBlank(temp)))
 		{
-			EraseCredential(ssid);
+			DeleteCredentials(ssid);
 		}
 	}
 }
@@ -119,7 +119,7 @@ void WirelessConfigurationMgr::Reset()
 		// erasure of credentials is incomplete, if the corresponding
 		// SSID has been cleared first, then it can be erased at startup
 		EraseSsid(ssid);
-		EraseCredential(ssid);
+		DeleteCredentials(ssid);
 	}
 }
 
@@ -147,7 +147,7 @@ int WirelessConfigurationMgr::SetSsid(const WirelessConfigurationData& data, boo
 	{
 		// This might previously be an enterprise ssid, delete
 		// its credentials here.
-		if (temp.eap.protocol == EAPProtocol::NONE || (EraseSsid(ssid) && EraseCredential(ssid)))
+		if (temp.eap.protocol == EAPProtocol::NONE || (EraseSsid(ssid) && DeleteCredentials(ssid)))
 		{
 			if (SetSsidData(ssid, data))
 			{
@@ -275,7 +275,7 @@ bool WirelessConfigurationMgr::EndEnterpriseSsid(bool cancel)
 	{
 		if (cancel)
 		{
-			EraseCredential(pendingSsid->ssid);
+			DeleteCredentials(pendingSsid->ssid);
 		}
 		else
 		{
@@ -289,7 +289,7 @@ bool WirelessConfigurationMgr::EndEnterpriseSsid(bool cancel)
 
 				if (ok && !pendingSsid->sizes.asArr[cred])
 				{
-					ok = EraseCredential(pendingSsid->ssid, cred);
+					ok = DeleteCredential(pendingSsid->ssid, cred);
 				}
 			}
 
@@ -299,7 +299,7 @@ bool WirelessConfigurationMgr::EndEnterpriseSsid(bool cancel)
 			}
 			else
 			{
-				EraseCredential(pendingSsid->ssid);
+				DeleteCredentials(pendingSsid->ssid);
 			}
 		}
 
@@ -408,15 +408,7 @@ bool WirelessConfigurationMgr::DeleteKV(const char *key)
 {
 	if (key)
 	{
-		// Faster than actually deleting the file, for the cost
-		// of a few more bytes maintaing the empty file.
-		int f = open(key, O_WRONLY | O_TRUNC | O_CREAT);
-
-		if (f >= 0)
-		{
-			close(f);
-			return true;
-		}
+		return (remove(key) == 0);
 	}
 
 	return false;
@@ -535,23 +527,22 @@ const char* WirelessConfigurationMgr::GetCredentialKey(char *buff, int ssid, int
 	return (res > 0 && res < MAX_KEY_LEN) ? buff : nullptr;
 }
 
-bool WirelessConfigurationMgr::EraseCredential(int ssid)
+bool WirelessConfigurationMgr::DeleteCredentials(int ssid)
 {
 	bool res = true;
-	char key[MAX_KEY_LEN] = { 0 };
 
 	for (int cred = 0; res && cred < ARRAY_SIZE(pendingSsid->sizes.asArr); cred++)
 	{
-		res = DeleteKV(GetCredentialKey(key, ssid, cred));
+		res = DeleteCredential(ssid, cred);
 	}
 
 	return res;
 }
 
-bool WirelessConfigurationMgr::EraseCredential(int ssid, int cred)
+bool WirelessConfigurationMgr::DeleteCredential(int ssid, int cred)
 {
 	char key[MAX_KEY_LEN] = { 0 };
-	return DeleteKV(GetCredentialKey(key, ssid, cred));
+	return !GetKV(GetCredentialKey(key, ssid, cred), nullptr, 0) || DeleteKV(key);
 }
 
 bool WirelessConfigurationMgr::ResetIfCredentialsLoaded(int ssid)
