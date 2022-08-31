@@ -70,23 +70,17 @@ void WirelessConfigurationMgr::Init()
 
 		if (oldSsids) {
 			debugPrintf("restoring old SSID...");
-			const size_t eepromSizeNeeded = (MaxRememberedNetworks + 1) * sizeof(WirelessConfigurationData);
 
-			uint8_t *buff = reinterpret_cast<uint8_t*>(malloc(eepromSizeNeeded));
-			memset(buff, 0xFF, eepromSizeNeeded);
-			esp_partition_read(oldSsids, 0, buff, eepromSizeNeeded);
-
-			WirelessConfigurationData *data = reinterpret_cast<WirelessConfigurationData*>(buff);
 			for (int ssid = MaxRememberedNetworks; ssid >= 0; ssid--) {
-				WirelessConfigurationData *temp = &(data[ssid]);
-				if (temp->ssid[0] != 0xFF) {
-					SetSsidData(ssid, *temp);
+				WirelessConfigurationData temp;
+				esp_partition_read(oldSsids, ssid * sizeof(temp), &temp, sizeof(temp));
+
+				if (temp.ssid[0] != 0xFF) {
+					SetSsidData(ssid, temp);
 				}
 			}
-
-			free(buff);
-			debugPrintf("done!\n");
 		}
+		debugPrintf("done!\n");
 	}
 
 #if ESP32C3
