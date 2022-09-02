@@ -508,10 +508,17 @@ const char* WirelessConfigurationMgr::GetScratchKey(char *buff, int id)
 
 bool WirelessConfigurationMgr::ResetScratch()
 {
-	char key[MAX_KEY_LEN] = { 0 };
-	uint32_t zero = 0;
-	return SetKV(GetScratchKey(key, LOADED_SSID_ID), &zero, sizeof(zero)) &&
-			SetKV(GetScratchKey(key, SCRATCH_OFFSET_ID), &zero, sizeof(zero));
+	esp_err_t err = esp_partition_erase_range(scratchPartition, 0, scratchPartition->size);
+
+	if (err == ESP_OK)
+	{
+		char key[MAX_KEY_LEN] = { 0 };
+		uint32_t zero = 0;
+		return SetKV(GetScratchKey(key, LOADED_SSID_ID), &zero, sizeof(zero)) &&
+				SetKV(GetScratchKey(key, SCRATCH_OFFSET_ID), &zero, sizeof(zero));
+	}
+
+	return false;
 }
 
 const char* WirelessConfigurationMgr::GetCredentialKey(char *buff, int ssid, int cred)
