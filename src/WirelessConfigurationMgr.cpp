@@ -338,7 +338,7 @@ const uint8_t* WirelessConfigurationMgr::GetEnterpriseCredentials(int ssid, cons
 		}
 
 		// Erasing the flash storage has to be in multiples of SPI_FLASH_SEC_SZ.
-		size_t actualSize = round2SecSz(totalSize);
+		totalSize = round2SecSz(totalSize);
 
 		// If the SSID has already been loaded, just return the existing pointer
 		// and compute offsets.asMemb. If not, load it in the scratch partition.
@@ -350,60 +350,101 @@ const uint8_t* WirelessConfigurationMgr::GetEnterpriseCredentials(int ssid, cons
 				offset += sizes.asArr[cred];
 			}
 
-			res = (scratchBase + baseOffset - actualSize);
+			res = (scratchBase + baseOffset - totalSize);
 		}
 		else
 		{
-			if (baseOffset + actualSize > scratchPartition->size)
-			{
-				baseOffset = 0;
-			}
+			bool ok = true;
+			uint8_t *buff = static_cast<uint8_t*>(calloc(MaxCredentialChunkSize, 1));
 
-			uint32_t newOffset = baseOffset + actualSize;
-			bool ok = SetKV(GetScratchKey(key, SCRATCH_OFFSET_ID), &newOffset, sizeof(newOffset));
-
-			if (ok)
+			if (loadedSsid)
 			{
-				ok = (esp_partition_erase_range(scratchPartition, baseOffset, actualSize) == ESP_OK);
+				// Reset the loaded ssid value
+				uint32_t zero = 0;
+				bool ok = SetKV(GetScratchKey(key, LOADED_SSID_ID), &zero, sizeof(zero));
 
 				if (ok)
 				{
-					// Store offsets from the base offset
-					uint8_t *buff = static_cast<uint8_t*>(malloc(MaxCredentialChunkSize));
+					uint32_t prevTotal = 0;
 
-					for(int cred = 0, offset = 0; ok && cred < ARRAY_SIZE(offsets.asArr); cred++)
-					{
-						offsets.asArr[cred] = offset;
-
-						for(int sz = 0, pos = 0, remain = sizes.asArr[cred];
-							ok && remain > 0; remain -= sz, offset += sz, pos += sz)
-						{
-							memset(buff, 0, MaxCredentialChunkSize);
-
-							sz = (remain >= MaxCredentialChunkSize) ? MaxCredentialChunkSize : remain;
-							ok = GetKV(GetCredentialKey(key, ssid, cred), buff, sz, pos);
-
-							if (ok)
-							{
-								ok = (esp_partition_write(scratchPartition, baseOffset + offset, buff, sz) == ESP_OK);
-							}
-						}
-					}
-
-					free(buff);
+					WirelessConfigurationData loaded;
+					ok = GetSsid(loadedSsid, loaded);
 
 					if (ok)
 					{
-						loadedSsid = ssid;
-						ok = SetKV(GetScratchKey(key, LOADED_SSID_ID), &loadedSsid, sizeof(loadedSsid));
+						const CredentialsInfo& prevSizes = loaded.eap.credSizes;
 
-						if (ok)
+						for (uint32_t sz : prevSizes.asArr)
 						{
-							res = scratchBase + baseOffset;
+							prevTotal += sz;
+						}
+
+						prevTotal = round2SecSz(prevTotal);
+					}
+
+					if (ok)
+					{
+						static_assert(SPI_FLASH_SEC_SIZE % MaxCredentialChunkSize == 0);
+						// Zero the currently loaded credentials memory
+						for (int pos = baseOffset - prevTotal; ok && pos < prevTotal; pos += MaxCredentialChunkSize)
+						{
+							ok = (esp_partition_write(scratchPartition, pos, buff, MaxCredentialChunkSize) == ESP_OK);
 						}
 					}
 				}
 			}
+
+			if (ok)
+			{
+				if (baseOffset + totalSize > scratchPartition->size)
+				{
+					baseOffset = 0;
+				}
+
+				uint32_t newOffset = baseOffset + totalSize;
+				ok = SetKV(GetScratchKey(key, SCRATCH_OFFSET_ID), &newOffset, sizeof(newOffset));
+
+				if (ok)
+				{
+					ok = (esp_partition_erase_range(scratchPartition, baseOffset, totalSize) == ESP_OK);
+
+					if (ok)
+					{
+						// Store offsets from the base offset
+						for(int cred = 0, offset = 0; ok && cred < ARRAY_SIZE(offsets.asArr); cred++)
+						{
+							offsets.asArr[cred] = offset;
+
+							for(int sz = 0, pos = 0, remain = sizes.asArr[cred];
+								ok && remain > 0; remain -= sz, offset += sz, pos += sz)
+							{
+								memset(buff, 0, MaxCredentialChunkSize);
+
+								sz = (remain >= MaxCredentialChunkSize) ? MaxCredentialChunkSize : remain;
+								ok = GetKV(GetCredentialKey(key, ssid, cred), buff, sz, pos);
+
+								if (ok)
+								{
+									ok = (esp_partition_write(scratchPartition, baseOffset + offset, buff, sz) == ESP_OK);
+								}
+							}
+						}
+
+						if (ok)
+						{
+							loadedSsid = ssid;
+							ok = SetKV(GetScratchKey(key, LOADED_SSID_ID), &loadedSsid, sizeof(loadedSsid));
+
+							if (ok)
+							{
+								res = scratchBase + baseOffset;
+							}
+						}
+					}
+				}
+			}
+
+			free(buff);
 		}
 	}
 
