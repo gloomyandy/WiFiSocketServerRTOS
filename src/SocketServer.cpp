@@ -128,7 +128,7 @@ static uint16_t wifiScanNum = 0;
 // Reset to default settings
 void FactoryReset()
 {
-	wirelessConfigMgr->Reset();
+	wirelessConfigMgr->Reset(true);
 }
 
 // Check socket number in range, returning true if yes. Otherwise, set lastError and return false;

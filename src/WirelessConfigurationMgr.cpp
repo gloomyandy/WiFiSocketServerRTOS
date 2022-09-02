@@ -84,7 +84,7 @@ void WirelessConfigurationMgr::Init()
 	}
 
 #if ESP32C3
-	esp_spiffs_check(conf.partition_label);
+	esp_spiffs_check(NULL);
 #endif
 
 	// Storing an enterprise SSID and its credentials might not have
@@ -101,8 +101,14 @@ void WirelessConfigurationMgr::Init()
 	}
 }
 
-void WirelessConfigurationMgr::Reset()
+
+void WirelessConfigurationMgr::Reset(bool format)
 {
+	if (format)
+	{
+		esp_spiffs_format(NULL);
+	}
+
 	// Reset storage and reset values to default.
 	//  - clear the scratch partition, and the associated scratch
 	//		key-value pairs

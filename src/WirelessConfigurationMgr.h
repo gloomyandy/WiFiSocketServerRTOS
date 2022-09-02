@@ -29,7 +29,7 @@ public:
 	}
 
 	void Init();
-	void Reset();
+	void Reset(bool format = false);
 
 	int SetSsid(const WirelessConfigurationData& data, bool ap);
 	bool EraseSsid(const char *ssid);
