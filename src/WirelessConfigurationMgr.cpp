@@ -8,6 +8,7 @@
 #include "esp_spiffs.h"
 
 #include "Config.h"
+#include "Misc.h"
 
 #if ESP8266
 #include "esp8266/partition.h"
@@ -61,7 +62,7 @@ void WirelessConfigurationMgr::Init()
 	// since WirelessConfigurationMgr::Reset works it's way backwards to it.
 	if (!GetKV(GetSsidKey(key, 0), nullptr, 0))
 	{
-		debugPrintf("initializing SSID storage...");
+		debugPrint("initializing SSID storage...");
 		Reset();
 
 		// Restore SSID info from old, 1.x firmware, if the partition exists
@@ -69,7 +70,7 @@ void WirelessConfigurationMgr::Init()
 			ESP_PARTITION_SUBTYPE_DATA_NVS, "ssids_old");
 
 		if (oldSsids) {
-			debugPrintf("restoring old SSID...");
+			debugPrint("restoring old SSID...");
 
 			for (int ssid = MaxRememberedNetworks; ssid >= 0; ssid--) {
 				WirelessConfigurationData temp;
@@ -80,7 +81,7 @@ void WirelessConfigurationMgr::Init()
 				}
 			}
 		}
-		debugPrintf("done!\n");
+		debugPrint("done!\n");
 	}
 
 #if ESP32C3
