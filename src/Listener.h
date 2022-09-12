@@ -17,10 +17,8 @@ class Listener
 {
 public:
 	Listener();
-	void Accept();
 
 	static void Init();
-	static void Poll();
 	static bool Listen(uint32_t ip, uint16_t port, uint8_t protocol, uint16_t maxConns);
 	static void StopListening(uint16_t port);
 	static uint16_t GetPortByProtocol(uint8_t protocol);
@@ -28,6 +26,8 @@ public:
 private:
 	void Stop();
 
+	void Accept();
+	static void Poll();
 	static Listener *Allocate();
 	static void Unlink(Listener *lst);
 	static void Release(Listener *lst);
