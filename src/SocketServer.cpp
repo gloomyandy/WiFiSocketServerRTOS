@@ -8,6 +8,7 @@
 #include "ecv.h"
 #undef yield
 #undef array
+#undef out
 
 #include <cstring>
 #include <algorithm>
@@ -18,6 +19,7 @@ extern "C"
 	#include "lwip/stats.h"			// for stats_display()
 }
 
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "esp_netif.h"
@@ -27,7 +29,6 @@ extern "C"
 #include "esp_log.h"
 #include "esp_intr_alloc.h"
 #include "esp_partition.h"
-#include "driver/ledc.h"
 #include "mdns.h"
 #include "nvs_flash.h"
 #include "nvs.h"
