@@ -4,11 +4,12 @@ set(srcs "Misc.cpp"
          "Listener.cpp"
          "SocketServer.cpp"
          "Connection.cpp"
-         "DNSServer.cpp")
+         "DNSServer.cpp"
+         "WirelessConfigurationMgr.cpp")
 set(include_dirs ".")
 
 if(IDF_TARGET STREQUAL "esp8266")
-     list(APPEND srcs "esp8266/gpio.c" "esp8266/HSPI.cpp")
+     list(APPEND srcs "esp8266/gpio.c" "esp8266/partition.c" "esp8266/HSPI.cpp")
      list(APPEND include_dirs "esp8266")
 elseif(IDF_TARGET STREQUAL "esp32c3")
      list(APPEND srcs "esp32c3/HSPI.cpp")
@@ -18,7 +19,7 @@ endif()
 idf_component_register(SRCS "${srcs}"
                        INCLUDE_DIRS "${include_dirs}"
                        REQUIRES spi_flash mdns
-                       PRIV_REQUIRES indicator nvs_flash)
+                       PRIV_REQUIRES indicator nvs_flash wpa_supplicant spiffs)
 
 idf_build_get_property(python PYTHON)
 idf_build_get_property(build_dir BUILD_DIR)
@@ -29,6 +30,7 @@ add_custom_target(image ALL DEPENDS app bootloader
 
 if(IDF_TARGET STREQUAL "esp8266")
      target_compile_definitions(${COMPONENT_LIB} PRIVATE "ESP8266")
+     target_linker_script(${COMPONENT_LIB} INTERFACE "esp8266/scratch.ld")
 elseif(IDF_TARGET STREQUAL "esp32c3")
      target_compile_definitions(${COMPONENT_LIB} PRIVATE "ESP32C3")
 endif()

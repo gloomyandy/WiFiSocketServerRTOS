@@ -42,6 +42,7 @@ extern "C"
 #include "Config.h"
 #include "PooledStrings.h"
 #include "HSPI.h"
+#include "WirelessConfigurationMgr.h"
 
 #include "include/MessageFormats.h"
 #include "Connection.h"
@@ -56,6 +57,8 @@ extern "C"
 #include "esp32c3/spi.h"
 #endif
 
+#include "esp_wpa2.h"
+
 static const uint32_t MaxConnectTime = 40 * 1000;			// how long we wait for WiFi to connect in milliseconds
 static const uint32_t TransferReadyTimeout = 10;			// how many milliseconds we allow for the Duet to set
 													// TransferReady low after the end of a transaction,
@@ -68,6 +71,7 @@ static const int DefaultWiFiChannel = 6;
 static const int MaxAPConnections = 4;
 
 // Global data
+
 static volatile int currentSsid = -1;
 static char webHostName[HostNameLength + 1] = "Duet-WiFi";
 
@@ -81,14 +85,13 @@ static volatile WiFiState currentState = WiFiState::idle,
 static HSPIClass hspi;
 static uint32_t transferBuffer[NumDwords(MaxDataLength + 1)];
 
-static nvs_handle_t ssids;
-static const char* ssidsNs = "ssids";
-
 static TaskHandle_t mainTaskHdl;
 static TaskHandle_t connPollTaskHdl;
 static TimerHandle_t tfrReqExpTmr;
 
 static const char* WIFI_EVENT_EXT = "wifi_event_ext";
+
+static WirelessConfigurationMgr *wirelessConfigMgr;
 
 typedef enum {
 	WIFI_IDLE = 0,
@@ -122,67 +125,10 @@ static volatile wifi_scan_state_t scanState = WIFI_SCAN_IDLE;
 static wifi_ap_record_t *wifiScanAPs = nullptr;
 static uint16_t wifiScanNum = 0;
 
-bool GetSsidDataByIndex(int idx, WirelessConfigurationData& data)
+// Reset to default settings
+void FactoryReset()
 {
-	if (idx <= MaxRememberedNetworks) {
-		size_t sz = sizeof(data);
-		esp_err_t res = nvs_get_blob(ssids, std::to_string(idx).c_str(), &data, &sz);
-		return (res == ESP_OK) && (sz == sizeof(data));
-	}
-
-	return false;
-}
-
-// Look up a SSID in our remembered network list, return pointer to it if found
-int GetSsidDataByName(const char* ssid, WirelessConfigurationData& data)
-{
-	for (int i = MaxRememberedNetworks; i >= 0; i--)
-	{
-		WirelessConfigurationData d;
-		if (GetSsidDataByIndex(i, d) && strncmp(ssid, d.ssid, sizeof(d.ssid)) == 0)
-		{
-			data = d;
-			return i;
-		}
-	}
-	return -1;
-}
-
-int FindEmptySsidEntry()
-{
-	for (int i = MaxRememberedNetworks; i >= 0; i--)
-	{
-		WirelessConfigurationData d;
-		if (GetSsidDataByIndex(i, d) && d.ssid[0] == 0xFF)
-		{
-			return i;
-		}
-	}
-
-	return -1;
-}
-
-bool SetSsidData(int idx, const WirelessConfigurationData& data, bool commit=true)
-{
-	if (idx <= MaxRememberedNetworks) {
-		esp_err_t res = nvs_set_blob(ssids, std::to_string(idx).c_str(), &data, sizeof(data));
-
-		if (res == ESP_OK && commit) {
-			res = nvs_commit(ssids);
-		}
-
-		return res == ESP_OK;
-	}
-
-	return false;
-}
-
-bool EraseSsidData(int idx, bool commit = true)
-{
-	uint8_t clean[sizeof(WirelessConfigurationData)];
-	memset(clean, 0xFF, sizeof(clean));
-	const WirelessConfigurationData& d = *(reinterpret_cast<const WirelessConfigurationData*>(clean));
-	return SetSsidData(idx, d, commit);
+	wirelessConfigMgr->Reset(true);
 }
 
 // Check socket number in range, returning true if yes. Otherwise, set lastError and return false;
@@ -196,19 +142,6 @@ bool ValidSocketNumber(uint8_t num)
 	return false;
 }
 
-// Reset to default settings
-void FactoryReset(bool commit=true)
-{
-	for (int i = MaxRememberedNetworks; i >= 0; i--)
-	{
-		EraseSsidData(i, false);
-	}
-
-	if (commit) {
-		nvs_commit(ssids);
-	}
-}
-
 static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 								int32_t event_id, void* event_data)
 {
@@ -216,14 +149,19 @@ static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 
 	if (event_base == WIFI_EVENT_EXT && event_id == WIFI_EVENT_STA_CONNECTING) {
 		wifiEvt = STATION_CONNECTING;
+	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED) {
+		tcpip_adapter_set_hostname(TCPIP_ADAPTER_IF_STA, webHostName);
+		return;
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
 		wifi_event_sta_disconnected_t* disconnected = (wifi_event_sta_disconnected_t*) event_data;
 		switch (disconnected->reason) {
+			// include authentication failures in general
 			case WIFI_REASON_AUTH_EXPIRE:
 			case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
 			case WIFI_REASON_AUTH_FAIL:
 			case WIFI_REASON_ASSOC_FAIL:
 			case WIFI_REASON_HANDSHAKE_TIMEOUT:
+			case WIFI_REASON_802_1X_AUTH_FAILED:
 				wifiEvt = STATION_WRONG_PASSWORD;
 				break;
 			case WIFI_REASON_NO_AP_FOUND:
@@ -296,43 +234,11 @@ void RemoveMdnsServices()
 }
 
 // Try to connect using the specified SSID and password
-void ConnectToAccessPoint(const WirelessConfigurationData& apData)
-pre(currentState == NetworkState::idle)
+void ConnectToAccessPoint()
 {
-	wifi_config_t wifi_config;
-	memset(&wifi_config, 0, sizeof(wifi_config));
-	SafeStrncpy((char*)wifi_config.sta.ssid, (char*)apData.ssid,
-		std::min(sizeof(wifi_config.sta.ssid), sizeof(apData.ssid)));
-	SafeStrncpy((char*)wifi_config.sta.password, (char*)apData.password,
-		std::min(sizeof(wifi_config.sta.password), sizeof(apData.password)));
-	esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
-
-	tcpip_adapter_dhcpc_stop(TCPIP_ADAPTER_IF_STA);
-
-	// On Arduino core, gateway and subnet is ignored
-	// if IP address is not specified.
-	if (apData.ip) {
-		tcpip_adapter_ip_info_t ip_info;
-		ip_info.ip.addr = apData.ip;
-		ip_info.gw.addr = apData.gateway;
-
-		if(!apData.netmask) {
-			IP4_ADDR(&ip_info.netmask, 255,255,255,0); // default to 255.255.255.0
-		} else {
-			ip_info.netmask.addr = apData.netmask;
-		}
-		tcpip_adapter_set_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info);
-	} else {
-		tcpip_adapter_dhcpc_start(TCPIP_ADAPTER_IF_STA);
-	}
-
-	tcpip_adapter_set_hostname(TCPIP_ADAPTER_IF_STA, webHostName);
-
-	debugPrintf("Trying to connect to ssid \"%s\" with password \"%s\"\n", apData.ssid, apData.password);
 	esp_wifi_connect();
 	esp_event_post(WIFI_EVENT_EXT, WIFI_EVENT_STA_CONNECTING, NULL, 0, portMAX_DELAY);
 }
-
 
 void ConnectPoll(void* data)
 {
@@ -381,7 +287,7 @@ void ConnectPoll(void* data)
 					break;
 
 				case STATION_WRONG_PASSWORD:
-					error = "Wrong password";
+					error = "Authentication failed";
 					break;
 
 				case STATION_NO_AP_FOUND:
@@ -415,7 +321,7 @@ void ConnectPoll(void* data)
 					strcpy(lastConnectError, error);
 					SafeStrncat(lastConnectError, " while trying to connect to ", ARRAY_SIZE(lastConnectError));
 					WirelessConfigurationData wp;
-					GetSsidDataByIndex(currentSsid, wp);
+					wirelessConfigMgr->GetSsid(currentSsid, wp);
 					SafeStrncat(lastConnectError, wp.ssid, ARRAY_SIZE(lastConnectError));
 					lastError = error;
 					debugPrint("Failed to connect to AP\n");
@@ -483,9 +389,10 @@ void ConnectPoll(void* data)
 		if (retry)
 		{
 			WirelessConfigurationData wp;
-			GetSsidDataByIndex(currentSsid, wp);
+			wirelessConfigMgr->GetSsid(currentSsid, wp);
 			currentState = WiFiState::reconnecting;
-			ConnectToAccessPoint(wp);
+			debugPrintf("Trying to reconnect to ssid \"%s\" with password \"%s\"\n", wp.ssid, wp.password);
+			ConnectToAccessPoint();
 		}
 
 		if (currentState != prevCurrentState) {
@@ -525,10 +432,9 @@ pre(currentState == WiFiState::idle)
 	WirelessConfigurationData wp;
 	esp_wifi_stop();
 
-	ConfigureSTAMode();
-
 	if (ssid == nullptr || ssid[0] == 0)
 	{
+		ConfigureSTAMode();
 		esp_wifi_start();
 
 		wifi_scan_config_t cfg;
@@ -538,8 +444,8 @@ pre(currentState == WiFiState::idle)
 		esp_err_t res = esp_wifi_scan_start(&cfg, true);
 
 		if (res != ESP_OK) {
-			lastError = "network scan failed";
 			esp_wifi_stop();
+			lastError = "network scan failed";
 			return;
 		}
 
@@ -549,6 +455,7 @@ pre(currentState == WiFiState::idle)
 		wifi_ap_record_t *ap_records = (wifi_ap_record_t*) calloc(num_ssids, sizeof(wifi_ap_record_t));
 
 		esp_wifi_scan_get_ap_records(&num_ssids, ap_records);
+		esp_wifi_stop();
 
 		// Find the strongest network that we know about
 		int8_t strongestNetwork = -1;
@@ -558,7 +465,7 @@ pre(currentState == WiFiState::idle)
 			if (strongestNetwork < 0 || ap_records[i].rssi > ap_records[strongestNetwork].rssi)
 			{
 				WirelessConfigurationData temp;
-				if (GetSsidDataByName((const char*)ap_records[i].ssid, temp) > 0)
+				if (wirelessConfigMgr->GetSsid((const char*)ap_records[i].ssid, temp) > 0)
 				{
 					strongestNetwork = i;
 				}
@@ -577,27 +484,125 @@ pre(currentState == WiFiState::idle)
 		if (strongestNetwork < 0)
 		{
 			lastError = "no known networks found";
-			esp_wifi_stop();
 			return;
 		}
 
-		currentSsid = GetSsidDataByName(ssid, wp);
+		currentSsid = wirelessConfigMgr->GetSsid(ssid, wp);
 	}
 	else
 	{
-		int idx = GetSsidDataByName(ssid, wp);
+		int idx = wirelessConfigMgr->GetSsid(ssid, wp);
 		if (idx <= 0)
 		{
 			lastError = "no data found for requested SSID";
 			return;
 		}
 
-		esp_wifi_start();
 		currentSsid = idx;
 	}
 
+	ConfigureSTAMode();
+
+	wifi_config_t wifi_config;
+	memset(&wifi_config, 0, sizeof(wifi_config));
+	SafeStrncpy((char*)wifi_config.sta.ssid, (char*)wp.ssid,
+		std::min(sizeof(wifi_config.sta.ssid), sizeof(wp.ssid)));
+
+	if (wp.eap.protocol == EAPProtocol::NONE)
+	{
+		SafeStrncpy((char*)wifi_config.sta.password, (char*)wp.password,
+			std::min(sizeof(wifi_config.sta.password), sizeof(wp.password)));
+	}
+
+	esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+
+	// Clear all credentials, even if requested network is not WPA2-Enterprise.
+	// Without this, connection to the same WPA2-Enterprise network with
+	// PSK credentials will succeed.
+	esp_wifi_sta_wpa2_ent_disable();
+	esp_wifi_sta_wpa2_ent_clear_identity();
+	esp_wifi_sta_wpa2_ent_clear_ca_cert();
+	esp_wifi_sta_wpa2_ent_clear_cert_key();
+	esp_wifi_sta_wpa2_ent_clear_username();
+	esp_wifi_sta_wpa2_ent_clear_password();
+
+	if (wp.eap.protocol != EAPProtocol::NONE)
+	{
+		CredentialsInfo offsets;
+		CredentialsInfo &sizes = wp.eap.credSizes;
+
+		const uint8_t* base = wirelessConfigMgr->GetEnterpriseCredentials(currentSsid, sizes, offsets);
+
+		if (base == nullptr)
+		{
+			lastError = "Failed to load credentials";
+			return;
+		}
+
+		if (sizes.asMemb.anonymousId)
+		{
+			esp_wifi_sta_wpa2_ent_set_identity(base + offsets.asMemb.anonymousId, sizes.asMemb.anonymousId);
+		}
+
+		if (sizes.asMemb.caCert)
+		{
+			esp_wifi_sta_wpa2_ent_set_ca_cert(base + offsets.asMemb.caCert, sizes.asMemb.caCert);
+		}
+
+		if (wp.eap.protocol == EAPProtocol::EAP_TLS)
+		{
+			const uint8_t *privateKeyPswd = nullptr;
+			if (sizes.asMemb.tls.privateKeyPswd)
+			{
+				privateKeyPswd = base + offsets.asMemb.tls.privateKeyPswd;
+			}
+
+			esp_wifi_sta_wpa2_ent_set_cert_key(base + offsets.asMemb.tls.userCert, sizes.asMemb.tls.userCert,
+											base + offsets.asMemb.tls.privateKey, sizes.asMemb.tls.privateKey,
+											privateKeyPswd, sizes.asMemb.tls.privateKeyPswd);
+		}
+		else if (wp.eap.protocol == EAPProtocol::EAP_PEAP_MSCHAPV2 || wp.eap.protocol == EAPProtocol::EAP_TTLS_MSCHAPV2)
+		{
+			esp_wifi_sta_wpa2_ent_set_username(base + offsets.asMemb.peapttls.identity, sizes.asMemb.peapttls.identity);
+			esp_wifi_sta_wpa2_ent_set_password(base + offsets.asMemb.peapttls.password, sizes.asMemb.peapttls.password);
+		}
+		else
+		{
+			lastError = "Invalid 802.1x protocol";
+			return;
+		}
+
+#if ESP32C3
+		esp_wifi_sta_wpa2_ent_set_ttls_phase2_method(ESP_EAP_TTLS_PHASE2_MSCHAPV2);
+#endif
+
+		esp_wifi_sta_wpa2_ent_enable();
+	}
+
+	tcpip_adapter_dhcpc_stop(TCPIP_ADAPTER_IF_STA);
+
+	// On Arduino core, gateway and subnet is ignored
+	// if IP address is not specified.
+	if (wp.ip) {
+		tcpip_adapter_ip_info_t ip_info;
+		ip_info.ip.addr = wp.ip;
+		ip_info.gw.addr = wp.gateway;
+
+		if(!wp.netmask) {
+			IP4_ADDR(&ip_info.netmask, 255,255,255,0); // default to 255.255.255.0
+		} else {
+			ip_info.netmask.addr = wp.netmask;
+		}
+		tcpip_adapter_set_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info);
+	} else {
+		tcpip_adapter_dhcpc_start(TCPIP_ADAPTER_IF_STA);
+	}
+
+	esp_wifi_start();
+
 	// ssidData contains the details of the strongest known access point
-	ConnectToAccessPoint(wp);
+	debugPrintf("Trying to connect to ssid \"%s\" with password \"%s\"\n", wp.ssid, wp.password);
+	ConnectToAccessPoint();
 }
 
 bool CheckValidSSID(const char * array s)
@@ -660,7 +665,7 @@ void StartAccessPoint()
 {
 	esp_wifi_stop();
 	WirelessConfigurationData apData;
-	if (GetSsidDataByIndex(0, apData) && ValidApData(apData))
+	if (wirelessConfigMgr->GetSsid(WirelessConfigurationMgr::AP, apData) && ValidApData(apData))
 	{
 		esp_wifi_restore();
 		esp_err_t res = esp_wifi_set_mode(WIFI_MODE_AP);
@@ -753,7 +758,7 @@ static union
 // Send a response.
 // 'response' is the number of byes of response if positive, or the error code if negative.
 // Use only to respond to commands which don't include a data block, or when we don't want to read the data block.
-void IRAM_ATTR SendResponse(int32_t response)
+void SendResponse(int32_t response)
 {
 	(void)hspi.transfer32(response);
 	if (response > 0)
@@ -763,14 +768,13 @@ void IRAM_ATTR SendResponse(int32_t response)
 }
 
 // This is called when the SAM is asking to transfer data
-void IRAM_ATTR ProcessRequest()
+void ProcessRequest()
 {
 	// Set up our own headers
 	messageHeaderIn.hdr.formatVersion = InvalidFormatVersion;
 	messageHeaderOut.hdr.formatVersion = MyFormatVersion;
 	messageHeaderOut.hdr.state = currentState;
 	bool deferCommand = false;
-
 
 	// Begin the transaction
 	gpio_set_level(SamSSPin, 0);		// assert CS to SAM
@@ -945,7 +949,7 @@ void IRAM_ATTR ProcessRequest()
 				response->vcc = 0;
 #endif
 				WirelessConfigurationData wp;
-				GetSsidDataByIndex(currentSsid, wp);
+				wirelessConfigMgr->GetSsid(currentSsid, wp);
 				SafeStrncpy(response->versionText, firmwareVersion, sizeof(response->versionText));
 				SafeStrncpy(response->hostName, webHostName, sizeof(response->hostName));
 				SafeStrncpy(response->ssid, wp.ssid, sizeof(response->ssid));
@@ -964,30 +968,12 @@ void IRAM_ATTR ProcessRequest()
 			{
 				messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
 				hspi.transferDwords(nullptr, transferBuffer, NumDwords(sizeof(WirelessConfigurationData)));
-				const WirelessConfigurationData * const receivedClientData = reinterpret_cast<const WirelessConfigurationData *>(transferBuffer);
-				int index;
-				if (messageHeaderIn.hdr.command == NetworkCommand::networkConfigureAccessPoint)
-				{
-					index = 0;
-				}
-				else
-				{
-					WirelessConfigurationData d;
-					index = GetSsidDataByName(receivedClientData->ssid, d);
-					if (index < 0)
-					{
-						index = FindEmptySsidEntry();
-						if (index == 0) { // reserved for AP details
-							index = -1;
-						}
-					}
-				}
+				const WirelessConfigurationData *receivedClientData = reinterpret_cast<const WirelessConfigurationData *>(transferBuffer);
 
-				if (index >= 0)
-				{
-					SetSsidData(index, *receivedClientData);
-				}
-				else
+				const int ssid = wirelessConfigMgr->SetSsid(*receivedClientData,
+							messageHeaderIn.hdr.command == NetworkCommand::networkConfigureAccessPoint);
+
+				if (ssid < 0)
 				{
 					lastError = "SSID table full";
 				}
@@ -998,20 +984,116 @@ void IRAM_ATTR ProcessRequest()
 			}
 			break;
 
+		case NetworkCommand::networkAddEnterpriseSsid:		// add an enterprise access point
+			{
+				static bool pending = false;
+
+				AddEnterpriseSsidFlag flag = static_cast<AddEnterpriseSsidFlag>(messageHeaderIn.hdr.flags);
+				if (flag == AddEnterpriseSsidFlag::SSID) // add ssid info
+				{
+					if (!pending)
+					{
+						if (messageHeaderIn.hdr.dataLength == sizeof(WirelessConfigurationData))
+						{
+							EAPProtocol protocol = static_cast<EAPProtocol>(messageHeaderIn.hdr.socketNumber);
+
+							if (protocol == EAPProtocol::EAP_TTLS_MSCHAPV2 ||
+								protocol == EAPProtocol::EAP_PEAP_MSCHAPV2
+#if ESP32C3
+								|| protocol == EAPProtocol::EAP_TLS
+#endif
+								)
+							{
+								messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
+								hspi.transferDwords(nullptr, transferBuffer, NumDwords(sizeof(WirelessConfigurationData)));
+								WirelessConfigurationData *newSsid = reinterpret_cast<WirelessConfigurationData*>(transferBuffer);
+
+								newSsid->eap.protocol = protocol;
+
+								if (wirelessConfigMgr->BeginEnterpriseSsid(*newSsid))
+								{
+									pending = true;
+								}
+								else
+								{
+									lastError = "SSID table full";
+								}
+							}
+							else
+							{
+								SendResponse(ResponseBadParameter);
+							}
+						}
+						else
+						{
+							SendResponse(ResponseBadDataLength);
+						}
+					}
+					else
+					{
+						SendResponse(ResponseWrongState);
+					}
+				}
+				else
+				{
+					if (flag == AddEnterpriseSsidFlag::CREDENTIAL)
+					{
+						if (pending)
+						{
+							messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
+							memset(transferBuffer, 0, sizeof(transferBuffer));
+							hspi.transferDwords(nullptr, transferBuffer, NumDwords(messageHeaderIn.hdr.dataLength));
+
+							// messageHeaderIn.hdr.socketNumber holds credential ID.
+							if (!wirelessConfigMgr->SetEnterpriseCredential(messageHeaderIn.hdr.socketNumber,
+									transferBuffer, messageHeaderIn.hdr.dataLength))
+							{
+								pending = false;
+							}
+						}
+						else
+						{
+							SendResponse(ResponseWrongState);
+						}
+					}
+					else
+					{
+						if (flag == AddEnterpriseSsidFlag::COMMIT || flag == AddEnterpriseSsidFlag::CANCEL)
+						{
+							bool cancel = (flag == AddEnterpriseSsidFlag::CANCEL);
+
+							if (cancel || pending)
+							{
+								messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
+								bool ok = wirelessConfigMgr->EndEnterpriseSsid(flag == AddEnterpriseSsidFlag::CANCEL);
+								pending = false;
+
+								if (!ok || cancel)
+								{
+									lastError = "enterprise SSID not saved";
+								}
+							}
+							else
+							{
+								SendResponse(ResponseWrongState);
+							}
+						}
+						else
+						{
+							SendResponse(ResponseBadParameter);
+						}
+					}
+				}
+			}
+			break;
+
 		case NetworkCommand::networkDeleteSsid:				// delete a network from our access point list
 			if (messageHeaderIn.hdr.dataLength == SsidLength)
 			{
 				messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
 				hspi.transferDwords(nullptr, transferBuffer, NumDwords(SsidLength));
 
-				WirelessConfigurationData d;
-				int index = GetSsidDataByName(reinterpret_cast<char*>(transferBuffer), d);
-
-				if (index >= 0)
-				{
-					EraseSsidData(index);
-				}
-				else
+				if (!wirelessConfigMgr->EraseSsid(reinterpret_cast<const char*>(transferBuffer)))
 				{
 					lastError = "SSID not found";
 				}
@@ -1034,7 +1116,7 @@ void IRAM_ATTR ProcessRequest()
 				{
 
 					WirelessConfigurationData tempData;
-					GetSsidDataByIndex(i, tempData);
+					wirelessConfigMgr->GetSsid(i, tempData);
 					if (tempData.ssid[0] != 0xFF)
 					{
 						memcpy(p, &tempData, ReducedWirelessConfigurationDataSize);
@@ -1057,7 +1139,7 @@ void IRAM_ATTR ProcessRequest()
 				for (size_t i = 0; i <= MaxRememberedNetworks; ++i)
 				{
 					WirelessConfigurationData tempData;
-					GetSsidDataByIndex(i, tempData);
+					wirelessConfigMgr->GetSsid(i, tempData);
 					if (tempData.ssid[0] != 0xFF)
 					{
 						for (size_t j = 0; j < SsidLength && tempData.ssid[j] != 0; ++j)
@@ -1429,7 +1511,6 @@ void IRAM_ATTR ProcessRequest()
 			FactoryReset();
 			break;
 
-
 		case NetworkCommand::networkStartScan:
 			if (scanState == WIFI_SCAN_DONE)
 			{
@@ -1493,7 +1574,6 @@ void IRAM_ATTR TransferReadyIsr(void* p)
 
 void setup()
 {
-
 	mainTaskHdl = xTaskGetCurrentTaskHandle();
 
 	// Setup Wi-Fi
@@ -1505,12 +1585,15 @@ void setup()
 	esp_event_loop_create_default();
 
 	esp_event_handler_register(WIFI_EVENT_EXT, WIFI_EVENT_STA_CONNECTING, &HandleWiFiEvent, NULL);
+	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_CONNECTED, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_STOP, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_START, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_STOP, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_SCAN_DONE, &HandleWiFiEvent, NULL);
+
+	wirelessConfigMgr = WirelessConfigurationMgr::GetInstance();
 
 	wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
 	cfg.nvs_enable = false;
@@ -1520,37 +1603,7 @@ void setup()
 
 	esp_log_level_set("wifi", ESP_LOG_NONE);
 
-	nvs_flash_init_partition(ssidsNs);
-	nvs_open_from_partition(ssidsNs, ssidsNs, NVS_READWRITE, &ssids);
-	nvs_iterator_t savedSsids = nvs_entry_find(ssidsNs, ssidsNs, NVS_TYPE_ANY);
-	if (!savedSsids) {
-		FactoryReset(false);
-
-		// Restore ap info from old firmware
-		const esp_partition_t* ssids_old = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
-			ESP_PARTITION_SUBTYPE_DATA_NVS, "ssids_old");
-
-		if (ssids_old) {
-			const size_t eepromSizeNeeded = (MaxRememberedNetworks + 1) * sizeof(WirelessConfigurationData);
-
-			uint8_t *buf = reinterpret_cast<uint8_t*>(malloc(eepromSizeNeeded));
-			memset(buf, 0xFF, eepromSizeNeeded);
-			esp_partition_read(ssids_old, 0, buf, eepromSizeNeeded);
-
-			WirelessConfigurationData *data = reinterpret_cast<WirelessConfigurationData*>(buf);
-			for(int i = 0; i <= MaxRememberedNetworks; i++) {
-				WirelessConfigurationData *d = &(data[i]);
-				if (d->ssid[0] != 0xFF) {
-					SetSsidData(i, *d, false);
-				}
-			}
-
-			free(buf);
-		}
-
-		nvs_commit(ssids);
-	}
-	nvs_release_iterator(savedSsids);
+	wirelessConfigMgr->Init();
 
 	// Set up SPI hardware and request handling
 	gpio_reset_pin(SamTfrReadyPin);
@@ -1585,7 +1638,7 @@ void setup()
 	gpio_set_level(EspReqTransferPin, 1);					// tell the SAM we are ready to receive a command
 }
 
-void IRAM_ATTR loop()
+void loop()
 {
 	// See whether there is a request from the SAM.
 	// Duet WiFi 1.04 and earlier have hardware to ensure that TransferReady goes low when a transaction starts.
