@@ -4,6 +4,7 @@
  *  Created on: 12 Apr 2017
  *      Author: David
  */
+#include <cstring>
 
 #include "lwip/tcp.h"
 
@@ -166,6 +167,7 @@ void Listener::Poll()
 	netconn_set_nonblocking(tempPcb, 1);
 
 	ip_addr_t tempIp;
+	memset(&tempIp, 0, sizeof(tempIp));
 	tempIp.u_addr.ip4.addr = ip;
 	ip_set_option(tempPcb->pcb.tcp, SOF_REUSEADDR); 			// not sure we need this, but the Arduino HTTP server does it
 	err_t rc = netconn_bind(tempPcb, &tempIp, port);
