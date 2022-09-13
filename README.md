@@ -4,7 +4,7 @@ Firmware for Espressif Wi-Fi modules on Duet boards. Based on [DuetWiFiSocketSer
 
 ## Build
 
-Building the project generates `DuetWiFiServer.bin` used for [`M997 S1`](https://duet3d.dozuki.com/Wiki/M997). ESP8266 and ESP32C3 are supported.
+Building the project generates `DuetWiFiServer.bin` used for [`M997 S1`](https://duet3d.dozuki.com/Wiki/M997). ESP8266, ESP32, ESP32-S3 and ESP32-C3 are supported.
 
 ### ESP8266
 
@@ -84,21 +84,23 @@ Follow the instructions for setting up the build environment with Eclipse on [Li
 
 Afterwards, import this project in the `Import New Project` step.
 
-### ESP32C3
+### ESP32 / ESP32-S3 / ESP32-C3
 
 #### **Terminal (Windows/macOS/Linux)**
 
-1. Setup ESP-IDF `release/v4.4` according to your platform: [Linux/macOS](https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/get-started/linux-macos-setup.html), [Windows](https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/get-started/windows-setup.html).
+1. Setup ESP-IDF `release/v4.4` according to your platform: [Linux/macOS](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/linux-macos-setup.html), [Windows](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/windows-setup.html).
 
 2. Navigate to the WiFiSocketServerRTOS directory and execute the following command.  Once the build finishes, `DuetWiFiServer.bin`  will be in the `build` directory.
 
     ```console
-    user@pc:/path/to/WiFiSocketServerRTOS$ idf.py set-target esp32c3 build
+    user@pc:/path/to/WiFiSocketServerRTOS$ idf.py set-target esp32 build
     ```
+
+    Note: Replace `esp32` with the actual target chip
 
 #### **IDE (Windows/macOS/Linux)**
 
-Eclipse and VSCode are supported through plugins. Read more about the plugin setup and build process [on the docs page](https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/get-started/index.html#ide).
+Eclipse and VSCode are supported through plugins. Read more about the plugin setup and build process [on the docs page](https://docs.espressif.com/projects/esp-idf/en/latest/esp32c/get-started/index.html#ide).
 
 ## Links
 
