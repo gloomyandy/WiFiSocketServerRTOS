@@ -39,7 +39,6 @@ void Listener::Accept()
 				Connection * const conn = Connection::Allocate();
 				if (conn != nullptr)
 				{
-					netconn_set_nonblocking(newConn, 1);
 					rc = conn->Accept(newConn);
 					if (protocol == protocolFtpData)
 					{
@@ -94,7 +93,7 @@ void Listener::Poll()
 
 /*static*/ void Listener::netconn_cb(struct netconn *conn, enum netconn_evt evt, u16_t len)
 {
-	if (evt == NETCONN_EVT_RCVPLUS && len == 0) {
+	if ((evt == NETCONN_EVT_RCVPLUS || evt == NETCONN_EVT_RCVMINUS) && len == 0) {
 		xTaskNotifyGive(taskHdl);
 	}
 }

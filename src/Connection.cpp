@@ -275,6 +275,7 @@ int Connection::Accept(struct netconn *pcb)
 	readIndex = alreadyRead = 0;
 	netconn_set_sendtimeout(ownPcb, MaxWriteTime);
 	closeTimer = 0;
+	netconn_set_nonblocking(newConn, 1);
 	SetState(ConnState::connected);
 
 	return ERR_OK;
