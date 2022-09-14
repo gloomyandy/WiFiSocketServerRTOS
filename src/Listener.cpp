@@ -79,36 +79,33 @@ void Listener::Stop()
 	Release(this);
 }
 
-void Listener::Poll()
+/*static*/ void Listener::netconnCb(struct netconn *conn, enum netconn_evt evt, u16_t len)
 {
-	xSemaphoreTakeRecursive(listMutex, portMAX_DELAY);
-	for (Listener *p = activeList; p != nullptr; )
+	if (evt == NETCONN_EVT_RCVPLUS && len == 0)
 	{
-		Listener *n = p->next;
-		p->Accept();
-		p = n;
-	}
-	xSemaphoreGiveRecursive(listMutex);
-}
-
-/*static*/ void Listener::netconn_cb(struct netconn *conn, enum netconn_evt evt, u16_t len)
-{
-	if ((evt == NETCONN_EVT_RCVPLUS || evt == NETCONN_EVT_RCVMINUS) && len == 0) {
 		xTaskNotifyGive(taskHdl);
 	}
 }
 
-/*static*/ void Listener::task(void* p)
+/*static*/ void Listener::connAcceptTask(void* p)
 {
-	while(ulTaskNotifyTake(pdTRUE, portMAX_DELAY)) {
-		Listener::Poll();
+	while(ulTaskNotifyTake(pdTRUE, portMAX_DELAY))
+	{
+		xSemaphoreTakeRecursive(listMutex, portMAX_DELAY);
+		for (Listener *p = activeList; p != nullptr; )
+		{
+			Listener *n = p->next;
+			p->Accept();
+			p = n;
+		}
+		xSemaphoreGiveRecursive(listMutex);
 	}
 }
 
 /*static*/ void Listener::Init()
 {
 	listMutex = xSemaphoreCreateRecursiveMutex();
-	xTaskCreate(task, "listenTask", LISTEN_STACK, NULL, LISTEN_PRIO, &taskHdl);
+	xTaskCreate(connAcceptTask, "connAcceptTask", CONN_ACCEPT_STACK, NULL, CONN_ACCEPT_PRIO, &taskHdl);
 }
 
 // Set up a listener on a port, returning true if successful, or stop listening of maxConnections = 0
@@ -156,7 +153,7 @@ void Listener::Poll()
 	p->maxConnections = maxConns;
 
 	// Call LWIP to set up a listener
-	struct netconn * tempPcb = netconn_new_with_callback(NETCONN_TCP, netconn_cb);
+	struct netconn * tempPcb = netconn_new_with_callback(NETCONN_TCP, netconnCb);
 	if (tempPcb == nullptr)
 	{
 		Release(p);
