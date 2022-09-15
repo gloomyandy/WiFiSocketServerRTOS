@@ -106,7 +106,7 @@ void Connection::Poll()
 
 		if (rc != ERR_WOULDBLOCK)
 		{
-			if (rc == ERR_RST)
+			if (rc == ERR_RST || rc == ERR_CLSD || rc == ERR_CONN)
 			{
 				SetState(ConnState::otherEndClosed);
 			}
@@ -169,10 +169,17 @@ size_t Connection::Write(const uint8_t *data, size_t length, bool doPush, bool c
 
 	if (rc != ERR_OK)
 	{
-		// We failed to write the data. See above for possible mitigations. For now we just terminate the connection.
-		debugPrintfAlways("Write fail len=%u err=%d\n", total, (int)rc);
-		Terminate(false);		// chrishamm: Not sure if this helps with LwIP v1.4.3 but it is mandatory for proper error handling with LwIP 2.0.3
-		return 0;
+		if (rc == ERR_RST || rc == ERR_CLSD)
+		{
+			SetState(ConnState::otherEndClosed);
+		}
+		else
+		{
+			// We failed to write the data. See above for possible mitigations. For now we just terminate the connection.
+			debugPrintfAlways("Write fail len=%u err=%d\n", total, (int)rc);
+			Terminate(false);		// chrishamm: Not sure if this helps with LwIP v1.4.3 but it is mandatory for proper error handling with LwIP 2.0.3
+			return 0;
+		}
 	}
 
 	// Close the connection again when we're done
