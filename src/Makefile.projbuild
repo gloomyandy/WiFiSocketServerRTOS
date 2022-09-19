@@ -1,3 +1,5 @@
+CXXFLAGS += -DESP8266
+
 flasher_args_file := $(BUILD_DIR_BASE)/flasher_args
 
 image: app bootloader | check_python_dependencies

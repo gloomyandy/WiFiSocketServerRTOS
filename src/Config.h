@@ -105,10 +105,10 @@ const uint8_t Backlog = 8;
 #define CONN_CLOSE_STACK  						(592)
 #define DNS_SERVER_STACK						(592)
 #else
-#define CONN_POLL_STACK							(1876)
-#define CONN_ACCEPT_STACK						(976)
-#define CONN_CLOSE_STACK	 					(976)
-#define DNS_SERVER_STACK						(976)
+#define CONN_POLL_STACK							(2260)
+#define CONN_ACCEPT_STACK						(1360)
+#define CONN_CLOSE_STACK	 					(1360)
+#define DNS_SERVER_STACK						(1360)
 #endif
 
 #endif

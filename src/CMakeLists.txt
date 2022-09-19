@@ -29,6 +29,6 @@ add_custom_target(image ALL DEPENDS app bootloader
                     "cmake" "${build_dir}" "${build_dir}/DuetWiFiServer.bin")
 
 if(IDF_TARGET STREQUAL "esp8266")
-     target_compile_definitions(${COMPONENT_LIB} PRIVATE "ESP8266")
+     target_compile_definitions(${COMPONENT_LIB} PUBLIC "ESP8266")
      target_linker_script(${COMPONENT_LIB} INTERFACE "esp8266/scratch.ld")
 endif()
