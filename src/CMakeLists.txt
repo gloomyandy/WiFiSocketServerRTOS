@@ -24,11 +24,16 @@ idf_component_register(SRCS "${srcs}"
 idf_build_get_property(python PYTHON)
 idf_build_get_property(build_dir BUILD_DIR)
 
-add_custom_target(image ALL DEPENDS app bootloader
-     COMMAND ${python} "${CMAKE_CURRENT_LIST_DIR}/create_image.py"
-                    "cmake" "${build_dir}" "${build_dir}/DuetWiFiServer.bin")
-
 if(IDF_TARGET STREQUAL "esp8266")
-     target_compile_definitions(${COMPONENT_LIB} PUBLIC "ESP8266")
-     target_linker_script(${COMPONENT_LIB} INTERFACE "esp8266/scratch.ld")
+    set(bin "DuetWiFiServer.bin")
+    target_compile_definitions(${COMPONENT_LIB} PUBLIC "ESP8266")
+    target_linker_script(${COMPONENT_LIB} INTERFACE "esp8266/scratch.ld")
+else()
+    string(REPLACE "esp" "" chip "${IDF_TARGET}")
+    string(TOUPPER "${chip}" chip)
+    set(bin "DuetWiFiModule_${chip}.bin")
 endif()
+
+add_custom_target(image ALL DEPENDS app bootloader
+    COMMAND ${python} "${CMAKE_CURRENT_LIST_DIR}/create_image.py"
+                "cmake" "${build_dir}" "${build_dir}/${bin}")
