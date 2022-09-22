@@ -27,7 +27,6 @@ const char* const firmwareVersion = VERSION_MAIN VERSION_DEBUG VERSION_SLEEP;
 // ************ This must be kept in step with the corresponding value in RepRapFirmware *************
 const uint32_t maxSpiFileData = 2048;
 
-#ifdef ESP8266
 // Define the SPI clock register
 // Useful values of the register are:
 // 0x1001	40MHz 1:1
@@ -39,9 +38,6 @@ const uint32_t maxSpiFileData = 2048;
 // The SAM occasionally transmits incorrect data at 40MHz, so we now use 26.7MHz.
 // Due to the 15ns SCLK to MISO delay of the SAMD51, 2:1 is preferred over 1:2
 const uint32_t defaultClockControl = 0x2002;		// 80MHz/3, mark:space 2:1
-#else
-const uint32_t defaultClockControl = 80000000/3;
-#endif
 
 // Pin numbers
 // SamSSPin - output to SAM, SS pin for SPI transfer

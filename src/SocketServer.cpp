@@ -1446,6 +1446,7 @@ void ProcessRequest()
 
 		case NetworkCommand::networkSetClockControl:
 			messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
+			hspi.transferDwords(nullptr, &messageHeaderIn.hdr.param32, NumDwords(sizeof(messageHeaderIn.hdr.param32)));
 			deferCommand = true;
 			break;
 
@@ -1548,7 +1549,9 @@ void ProcessRequest()
 			break;
 
 		case NetworkCommand::networkSetClockControl:
-			hspi.setClockDivider(messageHeaderIn.hdr.param32);
+			// Reinitialize with new clock config
+			hspi.end();
+			hspi.InitMaster(SPI_MODE1, messageHeaderIn.hdr.param32, true);
 			break;
 
 		default:

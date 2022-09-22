@@ -34,9 +34,29 @@
 
 static spi_device_handle_t spi;
 
+static void clockCtrl2Cfg(uint32_t val, spi_device_interface_config_t *devcfg)
+{
+	switch (val)
+	{
+	case 0x1001:
+		devcfg->clock_speed_hz = 80000000/2;
+		break;
+	case 0x3403:
+		devcfg->clock_speed_hz = 80000000/4;
+		break;
+	case 0x2001:
+	case 0x2402:
+	case 0x2002:
+	default:
+		devcfg->clock_speed_hz = 80000000/3;
+		break;
+	}
+}
+
 HSPIClass::HSPIClass()
 {
 }
+
 
 void HSPIClass::InitMaster(uint8_t mode, uint32_t clockReg, bool msbFirst)
 {
@@ -54,10 +74,11 @@ void HSPIClass::InitMaster(uint8_t mode, uint32_t clockReg, bool msbFirst)
 	spi_device_interface_config_t devcfg;
 	memset(&devcfg, 0, sizeof(devcfg));
 	devcfg.mode = mode;
-	devcfg.clock_speed_hz = clockReg;
 	devcfg.spics_io_num = -1;
 	devcfg.flags = SPI_DEVICE_NO_DUMMY | (!msbFirst ? SPI_DEVICE_BIT_LSBFIRST : 0);
 	devcfg.queue_size = 4;
+
+	clockCtrl2Cfg(clockReg, &devcfg);
 
 	spi_bus_initialize(MSPI, &buscfg, SPI_DMA_CH_AUTO);
 	spi_bus_add_device(MSPI, &devcfg, &spi);
@@ -68,6 +89,8 @@ void HSPIClass::InitMaster(uint8_t mode, uint32_t clockReg, bool msbFirst)
 void HSPIClass::end()
 {
 	spi_device_release_bus(spi);
+	spi_bus_remove_device(spi);
+	spi_bus_free(MSPI);
 }
 
 // Begin a transaction without changing settings

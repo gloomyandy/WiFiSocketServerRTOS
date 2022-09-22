@@ -35,13 +35,13 @@ public:
   void InitMaster(uint8_t mode, uint32_t freq, bool msbFirst);
   void end();
   void setDataBits(uint16_t bits);
-  void setClockDivider(uint32_t clockDiv);
   void beginTransaction();
   uint32_t transfer32(uint32_t data);
   void transferDwords(const uint32_t * out, uint32_t * in, uint32_t size);
   void endTransaction(void);
 
 private:
+  void setClockDivider(uint32_t clockDiv);
   void transferDwords_(const uint32_t * out, uint32_t * in, uint8_t size);
 };
 
