@@ -5,5 +5,6 @@
 
 PROJECT_NAME := WiFiSocketServerRTOS
 
-EXTRA_COMPONENT_DIRS = src
+EXTRA_COMPONENT_DIRS := src
+SDKCONFIG_DEFAULTS := sdkconfig.defaults sdkconfig.defaults.esp8266
 include $(IDF_PATH)/make/project.mk

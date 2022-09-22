@@ -5,7 +5,7 @@
 
 #define NO_WIFI_SLEEP	0
 
-#define VERSION_MAIN	"2.0beta1"
+#define VERSION_MAIN	"2.1beta1"
 
 #if NO_WIFI_SLEEP
 #define VERSION_SLEEP	"-nosleep"
@@ -27,7 +27,7 @@ const char* const firmwareVersion = VERSION_MAIN VERSION_DEBUG VERSION_SLEEP;
 // ************ This must be kept in step with the corresponding value in RepRapFirmware *************
 const uint32_t maxSpiFileData = 2048;
 
-#if ESP8266
+#ifdef ESP8266
 // Define the SPI clock register
 // Useful values of the register are:
 // 0x1001	40MHz 1:1
@@ -39,21 +39,41 @@ const uint32_t maxSpiFileData = 2048;
 // The SAM occasionally transmits incorrect data at 40MHz, so we now use 26.7MHz.
 // Due to the 15ns SCLK to MISO delay of the SAMD51, 2:1 is preferred over 1:2
 const uint32_t defaultClockControl = 0x2002;		// 80MHz/3, mark:space 2:1
-#elif ESP32C3
+#else
 const uint32_t defaultClockControl = 80000000/3;
 #endif
 
 // Pin numbers
-#if ESP8266
-const gpio_num_t SamSSPin = GPIO_NUM_15;			// GPIO15, output to SAM, SS pin for SPI transfer
-const gpio_num_t EspReqTransferPin = GPIO_NUM_0;	// GPIO0, output, indicates to the SAM that we want to send something
-const gpio_num_t SamTfrReadyPin = GPIO_NUM_4;		// GPIO4, input, indicates that SAM is ready to execute an SPI transaction
-const gpio_num_t OnboardLedPin = GPIO_NUM_2;		// GPIO 2
-#elif ESP32C3
-const gpio_num_t SamSSPin = GPIO_NUM_7;				// GPIO15, output to SAM, SS pin for SPI transfer
-const gpio_num_t EspReqTransferPin = GPIO_NUM_9;	// GPIO0, output, indicates to the SAM that we want to send something
-const gpio_num_t SamTfrReadyPin = GPIO_NUM_10;		// GPIO4, input, indicates that SAM is ready to execute an SPI transaction
-const gpio_num_t OnboardLedPin = GPIO_NUM_8;		// GPIO 2
+// SamSSPin - output to SAM, SS pin for SPI transfer
+// EspReqTransfer - output, indicates to the SAM that we want to send something
+// SamTfrReadyPin4 - input, indicates that SAM is ready to execute an SPI transaction
+// OnboardLedPin - output, wifi connection indicator
+#ifdef ESP8266
+const gpio_num_t SamSSPin = GPIO_NUM_15;
+const gpio_num_t EspReqTransferPin = GPIO_NUM_0;
+const gpio_num_t SamTfrReadyPin = GPIO_NUM_4;
+const gpio_num_t OnboardLedPin = GPIO_NUM_2;
+#else
+
+#if CONFIG_IDF_TARGET_ESP32C3
+const gpio_num_t SamSSPin = GPIO_NUM_7;
+const gpio_num_t EspReqTransferPin = GPIO_NUM_9;
+const gpio_num_t SamTfrReadyPin = GPIO_NUM_10;
+const gpio_num_t OnboardLedPin = GPIO_NUM_8;
+#elif CONFIG_IDF_TARGET_ESP32S3
+const gpio_num_t SamSSPin = GPIO_NUM_10;
+const gpio_num_t EspReqTransferPin = GPIO_NUM_0;
+const gpio_num_t SamTfrReadyPin = GPIO_NUM_8;
+const gpio_num_t OnboardLedPin = GPIO_NUM_6;
+#elif CONFIG_IDF_TARGET_ESP32
+const gpio_num_t SamSSPin = GPIO_NUM_5;
+const gpio_num_t EspReqTransferPin = GPIO_NUM_0;
+const gpio_num_t SamTfrReadyPin = GPIO_NUM_4;
+const gpio_num_t OnboardLedPin = GPIO_NUM_32;
+#else
+#error "pins not specifed for target chip"
+#endif
+
 #endif
 
 const uint8_t Backlog = 8;
@@ -75,11 +95,20 @@ const uint8_t Backlog = 8;
 
 #define MAIN_PRIO								(ESP_TASK_TCPIP_PRIO + 1)
 #define CONN_POLL_PRIO							(ESP_TASKD_EVENT_PRIO - 1)
-#define LISTEN_PRIO								(ESP_TASK_TCPIP_PRIO)
+#define CONN_ACCEPT_PRIO						(ESP_TASK_TCPIP_PRIO)
+#define CONN_CLOSE_PRIO							(ESP_TASK_MAIN_PRIO)
 #define DNS_SERVER_PRIO							(ESP_TASK_MAIN_PRIO)
 
+#ifdef ESP8266
 #define CONN_POLL_STACK							(1492)
-#define LISTEN_STACK							(592)
+#define CONN_ACCEPT_STACK						(592)
+#define CONN_CLOSE_STACK  						(592)
 #define DNS_SERVER_STACK						(592)
+#else
+#define CONN_POLL_STACK							(2260)
+#define CONN_ACCEPT_STACK						(1360)
+#define CONN_CLOSE_STACK	 					(1360)
+#define DNS_SERVER_STACK						(1360)
+#endif
 
 #endif

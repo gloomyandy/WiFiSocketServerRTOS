@@ -44,12 +44,12 @@ void HSPIClass::InitMaster(uint8_t mode, uint32_t clockReg, bool msbFirst)
 	PIN_PULLUP_EN(PERIPHS_IO_MUX_MTDI_U);
 	PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTDI_U, FUNC_HSPIQ_MISO);
 
-	REG(SPI_CTRL(HSPI)) = (msbFirst) ? 0 : SPI_WR_BIT_ORDER | SPI_RD_BIT_ORDER;
+	REG(SPI_CTRL(MSPI)) = (msbFirst) ? 0 : SPI_WR_BIT_ORDER | SPI_RD_BIT_ORDER;
 
-	REG(SPI_USER(HSPI)) = SPI_USR_MOSI | SPIUDUPLEX;
-	REG(SPI_USER1(HSPI)) = (7 << SPI_USR_MOSI_BITLEN_S) | (7 << SPI_USR_MISO_BITLEN_S);
-	REG(SPI_CTRL1(HSPI)) = 0;
-	REG(SPI_SLAVE(HSPI)) = 0;
+	REG(SPI_USER(MSPI)) = SPI_USR_MOSI | SPIUDUPLEX;
+	REG(SPI_USER1(MSPI)) = (7 << SPI_USR_MOSI_BITLEN_S) | (7 << SPI_USR_MISO_BITLEN_S);
+	REG(SPI_CTRL1(MSPI)) = 0;
+	REG(SPI_SLAVE(MSPI)) = 0;
 
 	const bool CPOL = (mode & 0x02); ///< CPOL (Clock Polarity)
 	const bool CPHA = (mode & 0x01); ///< CPHA (Clock Phase)
@@ -63,20 +63,20 @@ void HSPIClass::InitMaster(uint8_t mode, uint32_t clockReg, bool msbFirst)
 
 	if (CPHA)
 	{
-		REG(SPI_USER(HSPI)) |= (SPI_CK_OUT_EDGE | SPI_CK_I_EDGE);
+		REG(SPI_USER(MSPI)) |= (SPI_CK_OUT_EDGE | SPI_CK_I_EDGE);
 	}
 	else
 	{
-		REG(SPI_USER(HSPI)) &= ~(SPI_CK_OUT_EDGE | SPI_CK_I_EDGE);
+		REG(SPI_USER(MSPI)) &= ~(SPI_CK_OUT_EDGE | SPI_CK_I_EDGE);
 	}
 
 	if (CPOL)
 	{
-		REG(SPI_PIN(HSPI)) |= 1ul << 29;
+		REG(SPI_PIN(MSPI)) |= 1ul << 29;
 	}
 	else
 	{
-		REG(SPI_PIN(HSPI)) &= ~(1ul << 29);
+		REG(SPI_PIN(MSPI)) &= ~(1ul << 29);
 	}
 
 	setClockDivider(clockReg);
@@ -97,13 +97,13 @@ void HSPIClass::end() {
 
 // Begin a transaction without changing settings
 void IRAM_ATTR HSPIClass::beginTransaction() {
-	while(REG(SPI_CMD(HSPI)) & SPI_USR) {}
+	while(REG(SPI_CMD(MSPI)) & SPI_USR) {}
 }
 
 void IRAM_ATTR HSPIClass::endTransaction() {
 }
 
-// clockDiv is NOT the required division ratio, it is the value to write to the REG(SPI_CLOCK(HSPI)) register
+// clockDiv is NOT the required division ratio, it is the value to write to the REG(SPI_CLOCK(MSPI)) register
 void HSPIClass::setClockDivider(uint32_t clockDiv)
 {
 	// From the datasheet:
@@ -122,26 +122,26 @@ void HSPIClass::setClockDivider(uint32_t clockDiv)
 	{
 		REG(PERIPHS_IO_MUX) &= ~(1 << 9);
 	}
-	REG(SPI_CLOCK(HSPI)) = clockDiv;
+	REG(SPI_CLOCK(MSPI)) = clockDiv;
 }
 
 void HSPIClass::setDataBits(uint16_t bits)
 {
 	const uint32_t mask = ~((SPI_USR_MOSI_BITLEN << SPI_USR_MOSI_BITLEN_S) | (SPI_USR_MISO_BITLEN << SPI_USR_MISO_BITLEN_S));
 	bits--;
-	REG(SPI_USER1(HSPI)) = ((REG(SPI_USER1(HSPI)) & mask) | ((bits << SPI_USR_MOSI_BITLEN_S) | (bits << SPI_USR_MISO_BITLEN_S)));
+	REG(SPI_USER1(MSPI)) = ((REG(SPI_USER1(MSPI)) & mask) | ((bits << SPI_USR_MOSI_BITLEN_S) | (bits << SPI_USR_MISO_BITLEN_S)));
 }
 
 uint32_t IRAM_ATTR HSPIClass::transfer32(uint32_t data)
 {
-	while(REG(SPI_CMD(HSPI)) & SPI_USR) {}
+	while(REG(SPI_CMD(MSPI)) & SPI_USR) {}
 	// Set to 32Bits transfer
 	setDataBits(32);
 	// LSBFIRST Byte first
-	REG(SPI_W0(HSPI)) = data;
-	REG(SPI_CMD(HSPI)) |= SPI_USR;
-	while(REG(SPI_CMD(HSPI)) & SPI_USR) {}
-	return REG(SPI_W0(HSPI));
+	REG(SPI_W0(MSPI)) = data;
+	REG(SPI_CMD(MSPI)) |= SPI_USR;
+	while(REG(SPI_CMD(MSPI)) & SPI_USR) {}
+	return REG(SPI_W0(MSPI));
 }
 
 /**
@@ -164,12 +164,12 @@ void IRAM_ATTR HSPIClass::transferDwords(const uint32_t * out, uint32_t * in, ui
 }
 
 void IRAM_ATTR HSPIClass::transferDwords_(const uint32_t * out, uint32_t * in, uint8_t size) {
-	while(REG(SPI_CMD(HSPI)) & SPI_USR) {}
+	while(REG(SPI_CMD(MSPI)) & SPI_USR) {}
 
 	// Set in/out Bits to transfer
 	setDataBits(size * 32);
 
-	volatile uint32_t * fifoPtr = &REG(SPI_W0(HSPI));
+	volatile uint32_t * fifoPtr = &REG(SPI_W0(MSPI));
 	uint8_t dataSize = size;
 
 	if (out != nullptr) {
@@ -185,11 +185,11 @@ void IRAM_ATTR HSPIClass::transferDwords_(const uint32_t * out, uint32_t * in, u
 		}
 	}
 
-	REG(SPI_CMD(HSPI)) |= SPI_USR;
-	while(REG(SPI_CMD(HSPI)) & SPI_USR) {}
+	REG(SPI_CMD(MSPI)) |= SPI_USR;
+	while(REG(SPI_CMD(MSPI)) & SPI_USR) {}
 
 	if (in != nullptr) {
-		volatile uint32_t * fifoPtrRd = &REG(SPI_W0(HSPI));
+		volatile uint32_t * fifoPtrRd = &REG(SPI_W0(MSPI));
 		while(size != 0) {
 			*in++ = *fifoPtrRd++;
 			size--;

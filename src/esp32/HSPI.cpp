@@ -23,7 +23,7 @@
 
 #include "esp_attr.h"
 
-#include "esp32c3/spi.h"
+#include "esp32/spi.h"
 
 #include "esp_system.h"
 #include "driver/spi_master.h"
@@ -59,8 +59,8 @@ void HSPIClass::InitMaster(uint8_t mode, uint32_t clockReg, bool msbFirst)
 	devcfg.flags = SPI_DEVICE_NO_DUMMY | (!msbFirst ? SPI_DEVICE_BIT_LSBFIRST : 0);
 	devcfg.queue_size = 4;
 
-	spi_bus_initialize(HSPI, &buscfg, SPI_DMA_CH_AUTO);
-	spi_bus_add_device(HSPI, &devcfg, &spi);
+	spi_bus_initialize(MSPI, &buscfg, SPI_DMA_CH_AUTO);
+	spi_bus_add_device(MSPI, &devcfg, &spi);
 
 	spi_device_acquire_bus(spi, portMAX_DELAY);
 }

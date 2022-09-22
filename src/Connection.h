@@ -33,7 +33,6 @@ public:
 	size_t Read(uint8_t *data, size_t length);
 	size_t CanRead() const;
 	void Poll();
-	void PollRead();
 
 	// Callback functions
 	int Accept(struct netconn *pcb);
@@ -49,7 +48,6 @@ public:
 	static void ReportConnections();
 	static void GetSummarySocketStatus(uint16_t& connectedSockets, uint16_t& otherEndClosedSockets);
 	static void TerminateAll();
-	static void PollAll();
 
 private:
 	void FreePbuf();
@@ -67,11 +65,13 @@ private:
 	uint16_t remotePort;
 
 	uint32_t remoteIp;
-	uint32_t closeTimer;
 	size_t readIndex;			// how much data we have already read from the current pbuf
 	size_t alreadyRead;			// how much data we read from previous pbufs and didn't tell LWIP about yet
 	struct netconn *ownPcb;		// the pcb that corresponds to this connection
 	pbuf *pb;					// the buffers holding data we have received that has not yet been taken
+
+	static QueueHandle_t closeQueue;
+	static void connCloseTask(void* data);
 
 	static Connection *connectionList[MaxConnections];
 };

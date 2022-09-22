@@ -10,7 +10,7 @@
 #include "Config.h"
 #include "Misc.h"
 
-#if ESP8266
+#ifdef ESP8266
 #include "esp8266/partition.h"
 #endif
 
@@ -84,7 +84,7 @@ void WirelessConfigurationMgr::Init()
 		debugPrint("done!\n");
 	}
 
-#if ESP32C3
+#ifndef ESP8266
 	esp_spiffs_check(NULL);
 #endif
 
