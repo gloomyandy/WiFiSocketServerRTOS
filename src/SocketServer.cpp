@@ -1446,7 +1446,6 @@ void ProcessRequest()
 
 		case NetworkCommand::networkSetClockControl:
 			messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
-			hspi.transferDwords(nullptr, &messageHeaderIn.hdr.param32, NumDwords(sizeof(messageHeaderIn.hdr.param32)));
 			deferCommand = true;
 			break;
 

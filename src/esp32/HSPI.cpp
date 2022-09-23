@@ -116,9 +116,9 @@ uint32_t IRAM_ATTR HSPIClass::transfer32(uint32_t data)
 	memset(&trans, 0, sizeof(trans));
 	trans.length = 32;
 	*((uint32_t*)trans.tx_data) = data;
-	trans.flags |= SPI_TRANS_USE_TXDATA;
-	esp_err_t err = spi_device_polling_transmit(spi, &trans);
-	return err == ESP_OK ? data : 0;
+	trans.flags |= SPI_TRANS_USE_TXDATA | SPI_TRANS_USE_RXDATA;
+	spi_device_polling_transmit(spi, &trans);
+	return *((uint32_t*)trans.rx_data);
 }
 
 /**
