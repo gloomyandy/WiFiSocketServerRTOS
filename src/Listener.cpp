@@ -39,7 +39,7 @@ void Listener::Accept()
 				Connection * const conn = Connection::Allocate();
 				if (conn != nullptr)
 				{
-					rc = conn->Accept(newConn);
+					rc = conn->Accept(newConn, Incoming);
 					if (protocol == protocolFtpData)
 					{
 						debugPrintf("accept conn, stop listen on port %u\n", port);

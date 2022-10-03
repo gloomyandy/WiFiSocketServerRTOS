@@ -1459,7 +1459,21 @@ void ProcessRequest()
 			break;
 
 		case NetworkCommand::connCreate:					// create a connection
-			// Not implemented yet
+			{
+				messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
+
+				ListenOrConnectData lcData;
+				hspi.transferDwords(nullptr, reinterpret_cast<uint32_t*>(&lcData), NumDwords(sizeof(lcData)));
+
+				ets_printf("ip: %u  port: %d  local: %d\n", lcData.remoteIp, lcData.port, lcData.localPort);
+
+				if (!Connection::Connect(lcData.remoteIp, lcData.port, lcData.localPort))
+				{
+					lastError = "Connection creation failed";
+				}
+			}
+			break;
+
 		default:
 			SendResponse(ResponseUnknownCommand);
 			break;

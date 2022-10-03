@@ -29,11 +29,15 @@ const uint8_t InvalidFormatVersion = 0xC9;				// must be different from any form
 
 const uint32_t AnyIp = 0;
 
+const uint8_t Incoming = 0;
+const uint8_t Outgoing = 1;
+
 // Return a size rounded up to to a whole number of dwords
 static inline constexpr size_t NumDwords(size_t arg)
 {
 	return (arg + sizeof(uint32_t) - 1)/sizeof(uint32_t);
 }
+
 
 // Commands from the SAM to the ESP
 enum class NetworkCommand : uint8_t
@@ -128,8 +132,11 @@ struct ListenOrConnectData
 	uint32_t remoteIp;			// IP address to listen for, 0 means any
 	uint8_t protocol;			// Protocol for this connection (0 = HTTP, 1 = FTP, 2 = TELNET, 3 = FTP-DATA) - also see NetworkDefs.h
 	uint8_t dummy;				// To ensure alignment is the same on ESP8266 and SAM
-	uint16_t port;				// port number to listen on
-	uint16_t maxConnections;	// maximum number of connections to accept if listening
+	uint16_t port;				// port number to listen on if connection is incoming, or to connect to if outgoing
+	union {
+		uint16_t maxConnections;	// maximum number of connections to accept if listening
+		uint16_t localPort;			// if outgoining, the port number of the client
+	};
 };
 
 const uint8_t protocolHTTP = 0;
@@ -288,7 +295,8 @@ struct ConnStatusResponse
 {
 	ConnState state;
 	uint8_t socketNumber;
-	uint8_t dummy[2];
+	uint8_t direction;
+	uint8_t dummy[1];
 	uint16_t localPort;
 	uint16_t remotePort;
 	uint32_t remoteIp;

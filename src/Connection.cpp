@@ -18,7 +18,7 @@ QueueHandle_t Connection::closeQueue = nullptr;
 
 // Public interface
 Connection::Connection(uint8_t num)
-	: number(num), state(ConnState::free), localPort(0), remotePort(0), remoteIp(0),
+	: number(num), direction(Incoming), state(ConnState::free), localPort(0), remotePort(0), remoteIp(0),
 	readIndex(0), alreadyRead(0), ownPcb(nullptr), pb(nullptr)
 {
 }
@@ -32,6 +32,7 @@ void Connection::GetStatus(ConnStatusResponse& resp) const
 	resp.localPort = localPort;
 	resp.remotePort = remotePort;
 	resp.remoteIp = remoteIp;
+	resp.direction = direction;
 }
 
 // Close the connection.
@@ -88,7 +89,10 @@ void Connection::Terminate(bool external)
 
 void Connection::Poll()
 {
-	if (state == ConnState::connected || state == ConnState::otherEndClosed)
+	if (state == ConnState::otherEndClosed && direction == Outgoing)
+	{
+	}
+	else if (state == ConnState::connected || state == ConnState::otherEndClosed)
 	{
 		struct pbuf *data = nullptr;
 		err_t rc = netconn_recv_tcp_pbuf_flags(ownPcb, &data, NETCONN_NOAUTORCVD);
@@ -262,7 +266,7 @@ void Connection::Report()
 }
 
 // Callback functions
-int Connection::Accept(struct netconn *pcb)
+int Connection::Accept(struct netconn *pcb, int dir)
 {
 	ownPcb = pcb;
 	pb = nullptr;
@@ -270,8 +274,9 @@ int Connection::Accept(struct netconn *pcb)
 	remotePort = pcb->pcb.tcp->remote_port;
 	remoteIp = pcb->pcb.tcp->remote_ip.u_addr.ip4.addr;
 	readIndex = alreadyRead = 0;
+	direction = dir;
 	netconn_set_nonblocking(pcb, 1);
-	SetState(ConnState::connected);
+	SetState(direction == Incoming ? ConnState::connected : ConnState::connecting);
 	return ERR_OK;
 }
 
@@ -307,6 +312,63 @@ void Connection::FreePbuf()
 	{
 		connectionList[i] = new Connection((uint8_t)i);
 	}
+}
+
+/* static */ bool Connection::Connect(uint32_t remoteIp, uint16_t remotePort, uint16_t localPort)
+{
+	struct netconn * tempPcb = netconn_new_with_callback(NETCONN_TCP, netconnCb);
+	if (tempPcb == nullptr)
+	{
+		debugPrintAlways("can't allocate PCB\n");
+		return false;
+	}
+	netconn_set_nonblocking(tempPcb, 1);
+
+	err_t rc = 0;
+
+	if (localPort)
+	{
+		rc = netconn_bind(tempPcb, IP_ADDR_ANY, localPort);
+
+		if (rc != ERR_OK)
+		{
+			netconn_close(tempPcb);
+			netconn_delete(tempPcb);
+			debugPrintAlways("can't bind PCB\n");
+			return false;
+		}
+	}
+
+	ip_addr_t tempIp;
+	memset(&tempIp, 0, sizeof(tempIp));
+	tempIp.u_addr.ip4.addr = remoteIp;
+	ip_set_option(tempPcb->pcb.tcp, SOF_REUSEADDR); 			// not sure we need this, but the Arduino HTTP server does it
+
+	rc = netconn_connect(tempPcb, &tempIp, remotePort);
+
+	if (!(rc == ERR_OK || rc == ERR_INPROGRESS))
+	{
+		netconn_close(tempPcb);
+		netconn_delete(tempPcb);
+		debugPrintfAlways("can't connect: %d\n", (int)rc);
+		return false;
+	}
+
+	Connection * const conn = Connection::Allocate();
+
+	if (conn == nullptr)
+	{
+		netconn_close(tempPcb);
+		netconn_delete(tempPcb);
+		debugPrintfAlways("can't connect: %d\n", (int)rc);
+		return false;
+	}
+
+	// Find out the index of the connection allocated
+	conn->Accept(tempPcb, Outgoing);
+
+	// Return the index
+	return true;
 }
 
 /*static*/ uint16_t Connection::CountConnectionsOnPort(uint16_t port)
@@ -365,6 +427,35 @@ void Connection::FreePbuf()
 		connectionList[i]->Report();
 	}
 	ets_printf("\n");
+}
+
+
+/*static*/ void Connection::netconnCb(struct netconn *conn, enum netconn_evt evt, u16_t len)
+{
+	if (evt == NETCONN_EVT_SENDPLUS)
+	{
+		for (int i = 0; i < MaxConnections; i++)
+		{
+			Connection * const _conn = connectionList[i];
+			if (_conn && _conn->ownPcb == conn && _conn->state == ConnState::connecting)
+			{
+				_conn->SetState(ConnState::connected);
+				break;
+			}
+		}
+	}
+	else if (evt == NETCONN_EVT_ERROR)
+	{
+		for (int i = 0; i < MaxConnections; i++)
+		{
+			Connection * const _conn = connectionList[i];
+			if (_conn && _conn->ownPcb == conn && _conn->state == ConnState::connecting)
+			{
+				_conn->SetState(ConnState::otherEndClosed);
+				break;
+			}
+		}
+	}
 }
 
 // Static data
