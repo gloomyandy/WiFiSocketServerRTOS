@@ -35,13 +35,14 @@ public:
 	void Poll();
 
 	// Callback functions
-	int Accept(struct netconn *pcb);
+	int Accept(struct netconn *pcb, int dir);
 	void ConnError(int err);
 	int ConnRecv(pbuf *p, int err);
 	int ConnSent(uint16_t len);
 
 	// Static functions
 	static void Init();
+	static bool Connect(uint32_t remoteIp, uint16_t remotePort, uint16_t localPort);
 	static Connection *Allocate();
 	static Connection& Get(uint8_t num) { return *connectionList[num]; }
 	static uint16_t CountConnectionsOnPort(uint16_t port);
@@ -59,6 +60,7 @@ private:
 	}
 
 	uint8_t number;
+	uint8_t direction;
 	volatile ConnState state;
 
 	uint16_t localPort;
@@ -72,6 +74,8 @@ private:
 
 	static QueueHandle_t closeQueue;
 	static void connCloseTask(void* data);
+
+	static void netconnCb(struct netconn *conn, enum netconn_evt evt, u16_t len);
 
 	static Connection *connectionList[MaxConnections];
 };
