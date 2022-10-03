@@ -988,6 +988,7 @@ void ProcessRequest()
 		case NetworkCommand::networkAddEnterpriseSsid:		// add an enterprise access point
 			{
 				static bool pending = false;
+				static int32_t addErr = false;
 
 				AddEnterpriseSsidFlag flag = static_cast<AddEnterpriseSsidFlag>(messageHeaderIn.hdr.flags);
 				if (flag == AddEnterpriseSsidFlag::SSID) // add ssid info
@@ -996,19 +997,17 @@ void ProcessRequest()
 					{
 						if (messageHeaderIn.hdr.dataLength == sizeof(WirelessConfigurationData))
 						{
-							EAPProtocol protocol = static_cast<EAPProtocol>(messageHeaderIn.hdr.socketNumber);
+							EAPProtocol protocol = static_cast<EAPProtocol>(hspi.transfer32(ResponseEmpty));
 
-							if (protocol == EAPProtocol::EAP_TTLS_MSCHAPV2 ||
-								protocol == EAPProtocol::EAP_PEAP_MSCHAPV2
+							if (protocol == EAPProtocol::EAP_TTLS_MSCHAPV2
+								|| protocol == EAPProtocol::EAP_PEAP_MSCHAPV2
 #ifndef ESP8266
 								|| protocol == EAPProtocol::EAP_TLS
 #endif
 								)
 							{
-								messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
 								hspi.transferDwords(nullptr, transferBuffer, NumDwords(sizeof(WirelessConfigurationData)));
 								WirelessConfigurationData *newSsid = reinterpret_cast<WirelessConfigurationData*>(transferBuffer);
-
 								newSsid->eap.protocol = protocol;
 
 								if (wirelessConfigMgr->BeginEnterpriseSsid(*newSsid))
@@ -1017,12 +1016,13 @@ void ProcessRequest()
 								}
 								else
 								{
+									addErr = ResponseTooManySsids;
 									lastError = "SSID table full";
 								}
 							}
 							else
 							{
-								SendResponse(ResponseBadParameter);
+								addErr = ResponseBadParameter;
 							}
 						}
 						else
@@ -1035,55 +1035,64 @@ void ProcessRequest()
 						SendResponse(ResponseWrongState);
 					}
 				}
-				else
+				else if (flag == AddEnterpriseSsidFlag::CREDENTIAL)
 				{
-					if (flag == AddEnterpriseSsidFlag::CREDENTIAL)
+					if (pending)
 					{
-						if (pending)
-						{
-							messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
-							memset(transferBuffer, 0, sizeof(transferBuffer));
-							hspi.transferDwords(nullptr, transferBuffer, NumDwords(messageHeaderIn.hdr.dataLength));
+						messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
+						memset(transferBuffer, 0, sizeof(transferBuffer));
+						hspi.transferDwords(nullptr, transferBuffer, NumDwords(messageHeaderIn.hdr.dataLength));
 
-							// messageHeaderIn.hdr.socketNumber holds credential ID.
-							if (!wirelessConfigMgr->SetEnterpriseCredential(messageHeaderIn.hdr.socketNumber,
-									transferBuffer, messageHeaderIn.hdr.dataLength))
-							{
-								pending = false;
-							}
+						if (!wirelessConfigMgr->SetEnterpriseCredential(messageHeaderIn.hdr.param32,
+								transferBuffer, messageHeaderIn.hdr.dataLength))
+						{
+							pending = false;
+						}
+					}
+					else
+					{
+						if (addErr)
+						{
+							SendResponse(addErr);
+							addErr = ResponseEmpty;
 						}
 						else
 						{
 							SendResponse(ResponseWrongState);
 						}
 					}
+				}
+				else if (flag == AddEnterpriseSsidFlag::COMMIT || flag == AddEnterpriseSsidFlag::CANCEL)
+				{
+					bool cancel = (flag == AddEnterpriseSsidFlag::CANCEL);
+
+					if (cancel || pending)
+					{
+						messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
+						bool ok = wirelessConfigMgr->EndEnterpriseSsid(flag == AddEnterpriseSsidFlag::CANCEL);
+						pending = false;
+
+						if (!ok || cancel)
+						{
+							lastError = "enterprise SSID not saved";
+						}
+					}
 					else
 					{
-						if (flag == AddEnterpriseSsidFlag::COMMIT || flag == AddEnterpriseSsidFlag::CANCEL)
+						if (addErr)
 						{
-							bool cancel = (flag == AddEnterpriseSsidFlag::CANCEL);
-
-							if (cancel || pending)
-							{
-								messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
-								bool ok = wirelessConfigMgr->EndEnterpriseSsid(flag == AddEnterpriseSsidFlag::CANCEL);
-								pending = false;
-
-								if (!ok || cancel)
-								{
-									lastError = "enterprise SSID not saved";
-								}
-							}
-							else
-							{
-								SendResponse(ResponseWrongState);
-							}
+							SendResponse(addErr);
+							addErr = ResponseEmpty;
 						}
 						else
 						{
-							SendResponse(ResponseBadParameter);
+							SendResponse(ResponseWrongState);
 						}
 					}
+				}
+				else
+				{
+					SendResponse(ResponseBadParameter);
 				}
 			}
 			break;
