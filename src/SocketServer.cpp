@@ -833,8 +833,8 @@ void ProcessRequest()
 			break;
 
 		case NetworkCommand::networkFactoryReset:			// clear remembered list, reset factory defaults
-			deferCommand = true;
 			messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
+			FactoryReset();
 			break;
 
 		case NetworkCommand::networkStop:					// disconnect from an access point, or close down our own access point
@@ -1506,10 +1506,6 @@ void ProcessRequest()
 				break;
 			}
 			delay(100);
-			break;
-
-		case NetworkCommand::networkFactoryReset:			// clear remembered list, reset factory defaults
-			FactoryReset();
 			break;
 
 		case NetworkCommand::networkStartScan:
