@@ -47,7 +47,6 @@ extern "C"
 
 #include "include/MessageFormats.h"
 #include "Connection.h"
-#include "Listener.h"
 #include "Misc.h"
 #include "Config.h"
 
@@ -218,7 +217,7 @@ void RebuildServices()
 	mdns_hostname_set(webHostName);
 	for (size_t protocol = 0; protocol < 3; protocol++)
 	{
-		const uint16_t port = Listener::GetPortByProtocol(protocol);
+		const uint16_t port = Connection::GetPortByProtocol(protocol);
 		if (port != 0)
 		{
 			mdns_service_add(webHostName, MdnsServiceStrings[protocol], "_tcp", port,
@@ -1325,7 +1324,7 @@ void ProcessRequest()
 				messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
 				ListenOrConnectData lcData;
 				hspi.transferDwords(nullptr, reinterpret_cast<uint32_t*>(&lcData), NumDwords(sizeof(lcData)));
-				const bool ok = Listener::Listen(lcData.remoteIp, lcData.port, lcData.protocol, lcData.maxConnections);
+				const bool ok = Connection::Listen(lcData.port, lcData.remoteIp, lcData.protocol, lcData.maxConnections);
 				if (ok)
 				{
 					if (lcData.protocol < 3)			// if it's FTP, HTTP or Telnet protocol
@@ -1349,7 +1348,7 @@ void ProcessRequest()
 				messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
 				ListenOrConnectData lcData;
 				hspi.transferDwords(nullptr, reinterpret_cast<uint32_t*>(&lcData), NumDwords(sizeof(lcData)));
-				Listener::StopListening(lcData.port);
+				Connection::Dismiss(lcData.port);
 				RebuildServices();						// update the MDNS services
 				debugPrintf("Stopped listening on port %u\n", lcData.port);
 			}
@@ -1507,7 +1506,7 @@ void ProcessRequest()
 
 		case NetworkCommand::networkStop:					// disconnect from an access point, or close down our own access point
 			Connection::TerminateAll();						// terminate all connections
-			Listener::StopListening(0);						// stop listening on all ports
+			Connection::Dismiss(0);							// stop listening on all ports
 			RebuildServices();								// remove the MDNS services
 			switch (currentState)
 			{
@@ -1653,7 +1652,6 @@ void setup()
 
 	// Setup networking
 	Connection::Init();
-	Listener::Init();
 
 	lastError = nullptr;
 	debugPrint("Init completed\n");
