@@ -15,6 +15,7 @@
 
 static const uint32_t MaxAckTime = 4000;		// how long we wait for a connection to acknowledge the remaining data before it is closed
 QueueHandle_t Connection::closeQueue = nullptr;
+int Connection::closePcbCnt = 0;
 
 // Public interface
 Connection::Connection(uint8_t num)
@@ -43,14 +44,23 @@ void Connection::Close()
 {
 	if (state == ConnState::otherEndClosed ||  state == ConnState::connected)
 	{
+		// Shut down the transmission, sending FIN to peer.
+		netconn_shutdown(ownPcb, false, true);
 		SetState(ConnState::closePending);
 		FreePbuf();
 	}
 
-	if (xQueueSend(closeQueue, &ownPcb, 0) == pdTRUE)
+	// Closing and deleting the connection is handled in a separate task.
+	// While transmission has been shut down, only offically set this
+	// connection free when the connection has been sent to this task.
+	if (closePcbCnt < MaxConnections)
 	{
-		ownPcb = nullptr;
-		SetState(ConnState::free);
+		if (xQueueSend(closeQueue, &ownPcb, 0) == pdTRUE)
+		{
+			closePcbCnt++;
+			ownPcb = nullptr;
+			SetState(ConnState::free);
+		}
 	}
 }
 
@@ -69,21 +79,45 @@ void Connection::Terminate(bool external)
 
 /*static*/ void Connection::connCloseTask(void* p)
 {
-	struct netconn* pcb;
+	static netconn * closePcb[MaxConnections] = { nullptr };
+	static int timer[MaxConnections] = { 0 };
 
-	while (xQueueReceive(closeQueue, &pcb, portMAX_DELAY) == pdTRUE)
+	while (true)
 	{
-		int time = 0;
+		struct netconn* pcb;
 
-		while(time < MaxAckTime && (pcb->pcb.tcp && tcp_sndbuf(pcb->pcb.tcp) < TCP_SND_BUF))
+		BaseType_t res = xQueueReceive(closeQueue, &pcb, pdMS_TO_TICKS(2));
+
+		if (res == pdTRUE)
 		{
-			delay(10);
-			time += 10;
+			for (int i = 0; i < MaxConnections; i++)
+			{
+				if (closePcb[i] == nullptr)
+				{
+					closePcb[i] = pcb;
+					break;
+				}
+			}
 		}
 
-		netconn_close(pcb);
-		netconn_delete(pcb);
-		pcb = nullptr;
+		// Check if the pending connections need closing
+		for (int i = 0; i < MaxConnections; i++)
+		{
+			if (closePcb[i] != nullptr)
+			{
+				if ((closePcb[i]->pcb.tcp && closePcb[i]->pcb.tcp->unacked) && timer[i] < MaxAckTime)
+				{
+					timer[i] += 2;
+				}
+				else
+				{
+					netconn_close(closePcb[i]);
+					netconn_delete(closePcb[i]);
+					closePcb[i] = nullptr;
+					closePcbCnt--;
+				}
+			}
+		}
 	}
 }
 
@@ -378,6 +412,7 @@ void Connection::FreePbuf()
 	{
 		if (connectionList[i]->localPort == port)
 		{
+			// Try to close pending connections
 			if (connectionList[i]->state == ConnState::closePending)
 			{
 				connectionList[i]->Close();
