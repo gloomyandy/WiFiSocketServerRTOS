@@ -73,6 +73,8 @@ private:
 	pbuf *pb;					// the buffers holding data we have received that has not yet been taken
 
 	static QueueHandle_t closeQueue;
+	static int closePcbCnt;
+
 	static void connCloseTask(void* data);
 
 	static void netconnCb(struct netconn *conn, enum netconn_evt evt, u16_t len);
