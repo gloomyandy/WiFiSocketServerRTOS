@@ -9,156 +9,73 @@
 
 #include "lwip/tcp.h"
 
+#include "Listener.h"
 #include "Connection.h"
 #include "Misc.h"				// for millis
 #include "Config.h"
 
 static const uint32_t MaxAckTime = 4000;		// how long we wait for a connection to acknowledge the remaining data before it is closed
-QueueHandle_t Connection::closeQueue = nullptr;
-int Connection::closePcbCnt = 0;
+
+
+enum class ConnectionTaskEventType : uint8_t
+{
+	NONE,
+	CLOSE,
+	ACCEPT,
+};
+
+typedef struct {
+	ConnectionTaskEventType event;
+	struct netconn* conn;
+} ConnectionTaskEvent;
 
 // Public interface
 Connection::Connection(uint8_t num)
-	: number(num), direction(Incoming), state(ConnState::free), localPort(0), remotePort(0), remoteIp(0),
-	readIndex(0), alreadyRead(0), ownPcb(nullptr), pb(nullptr)
+	: number(num), localPort(0), remotePort(0), remoteIp(0), direction(Incoming), conn(nullptr), state(ConnState::free),
+	readBuf(nullptr), readIndex(0), alreadyRead(0)
 {
 }
 
-void Connection::GetStatus(ConnStatusResponse& resp) const
-{
-	resp.socketNumber = number;
-	resp.state = state;
-	resp.bytesAvailable = CanRead();
-	resp.writeBufferSpace = CanWrite();
-	resp.localPort = localPort;
-	resp.remotePort = remotePort;
-	resp.remoteIp = remoteIp;
-	resp.direction = direction;
-}
 
-// Close the connection.
-// If 'external' is true then the Duet main processor has requested termination, so we free up the connection.
-// Otherwise it has failed because of an internal error, and we set the state to 'aborted'. The Duet main processor will see this and send a termination request,
-// which will free it up.
-void Connection::Close()
+size_t Connection::Read(uint8_t *data, size_t length)
 {
-	if (state == ConnState::otherEndClosed ||  state == ConnState::connected)
+	size_t lengthRead = 0;
+	if (readBuf != nullptr && length != 0 && (state == ConnState::connected || state == ConnState::otherEndClosed))
 	{
-		// Shut down the transmission, sending FIN to peer.
-		netconn_shutdown(ownPcb, false, true);
-		SetState(ConnState::closePending);
-		FreePbuf();
-	}
-
-	// Closing and deleting the connection is handled in a separate task.
-	// While transmission has been shut down, only offically set this
-	// connection free when the connection has been sent to this task.
-	if (closePcbCnt < MaxConnections)
-	{
-		if (xQueueSend(closeQueue, &ownPcb, 0) == pdTRUE)
+		do
 		{
-			closePcbCnt++;
-			ownPcb = nullptr;
-			SetState(ConnState::free);
-		}
-	}
-}
+			const size_t toRead = std::min<size_t>(readBuf->len - readIndex, length);
+			memcpy(data + lengthRead, (uint8_t *)readBuf->payload + readIndex, toRead);
+			lengthRead += toRead;
+			readIndex += toRead;
+			length -= toRead;
+			if (readIndex != readBuf->len)
+			{
+				break;
+			}
+			pbuf * const currentPb = readBuf;
+			readBuf = readBuf->next;
+			currentPb->next = nullptr;
+			pbuf_free(currentPb);
+			readIndex = 0;
+		} while (readBuf != nullptr && length != 0);
 
-void Connection::Terminate(bool external)
-{
-	if (ownPcb) {
-		// Terminate immediately
-		netconn_close(ownPcb);
-		netconn_delete(ownPcb);
-		ownPcb = nullptr;
-	}
-	FreePbuf();
-	SetState((external) ? ConnState::free : ConnState::aborted);
-}
-
-
-/*static*/ void Connection::connCloseTask(void* p)
-{
-	static netconn * closePcb[MaxConnections] = { nullptr };
-	static int timer[MaxConnections] = { 0 };
-
-	while (true)
-	{
-		struct netconn* pcb;
-
-		BaseType_t res = xQueueReceive(closeQueue, &pcb, pdMS_TO_TICKS(2));
-
-		if (res == pdTRUE)
+		alreadyRead += lengthRead;
+		if (readBuf == nullptr || alreadyRead >= TCP_MSS)
 		{
-			for (int i = 0; i < MaxConnections; i++)
-			{
-				if (closePcb[i] == nullptr)
-				{
-					closePcb[i] = pcb;
-					break;
-				}
-			}
-		}
-
-		// Check if the pending connections need closing
-		for (int i = 0; i < MaxConnections; i++)
-		{
-			if (closePcb[i] != nullptr)
-			{
-				if ((closePcb[i]->pcb.tcp && closePcb[i]->pcb.tcp->unacked) && timer[i] < MaxAckTime)
-				{
-					timer[i] += 2;
-				}
-				else
-				{
-					netconn_close(closePcb[i]);
-					netconn_delete(closePcb[i]);
-					closePcb[i] = nullptr;
-					closePcbCnt--;
-				}
-			}
+			netconn_tcp_recvd(conn, alreadyRead);
+			alreadyRead = 0;
 		}
 	}
+	return lengthRead;
 }
 
-void Connection::Poll()
+size_t Connection::CanRead() const
 {
-	if (state == ConnState::otherEndClosed && direction == Outgoing)
-	{
-	}
-	else if (state == ConnState::connected || state == ConnState::otherEndClosed)
-	{
-		struct pbuf *data = nullptr;
-		err_t rc = netconn_recv_tcp_pbuf_flags(ownPcb, &data, NETCONN_NOAUTORCVD);
-
-		while(rc == ERR_OK) {
-			if (pb == nullptr) {
-				pb = data;
-				readIndex = alreadyRead = 0;
-			} else {
-				pbuf_cat(pb, data);
-			}
-			data = nullptr;
-			rc = netconn_recv_tcp_pbuf_flags(ownPcb, &data, NETCONN_NOAUTORCVD);
-		}
-
-		if (rc != ERR_WOULDBLOCK)
-		{
-			if (rc == ERR_RST || rc == ERR_CLSD || rc == ERR_CONN)
-			{
-				SetState(ConnState::otherEndClosed);
-			}
-			else
-			{
-				Terminate(false);
-			}
-		}
-	}
-	else if (state == ConnState::closePending)
-	{
-		Close();
-	}
+	return ((state == ConnState::connected || state == ConnState::otherEndClosed) && readBuf != nullptr)
+			? readBuf->tot_len - readIndex : 0;
 }
+
 
 // Write data to the connection. The amount of data may be zero.
 // A note about writing:
@@ -198,7 +115,7 @@ size_t Connection::Write(const uint8_t *data, size_t length, bool doPush, bool c
 
 	for( ; total < length; total += written) {
 		written = 0;
-		rc = netconn_write_partly(ownPcb, data + total, length - total, flag, &written);
+		rc = netconn_write_partly(conn, data + total, length - total, flag, &written);
 
 		if (rc != ERR_OK && rc != ERR_WOULDBLOCK) {
 			break;
@@ -233,47 +150,123 @@ size_t Connection::CanWrite() const
 {
 	// Return the amount of free space in the write buffer
 	// Note: we cannot necessarily write this amount, because it depends on memory allocations being successful.
-	return ((state == ConnState::connected) && ownPcb->pcb.tcp) ?
-		std::min((size_t)tcp_sndbuf(ownPcb->pcb.tcp), MaxDataLength) : 0;
+	return ((state == ConnState::connected) && conn->pcb.tcp) ?
+		std::min((size_t)tcp_sndbuf(conn->pcb.tcp), MaxDataLength) : 0;
 }
 
-size_t Connection::Read(uint8_t *data, size_t length)
+void Connection::Poll()
 {
-	size_t lengthRead = 0;
-	if (pb != nullptr && length != 0 && (state == ConnState::connected || state == ConnState::otherEndClosed))
+	if (state == ConnState::connected || state == ConnState::otherEndClosed)
 	{
-		do
-		{
-			const size_t toRead = std::min<size_t>(pb->len - readIndex, length);
-			memcpy(data + lengthRead, (uint8_t *)pb->payload + readIndex, toRead);
-			lengthRead += toRead;
-			readIndex += toRead;
-			length -= toRead;
-			if (readIndex != pb->len)
-			{
-				break;
-			}
-			pbuf * const currentPb = pb;
-			pb = pb->next;
-			currentPb->next = nullptr;
-			pbuf_free(currentPb);
-			readIndex = 0;
-		} while (pb != nullptr && length != 0);
+		struct pbuf *data = nullptr;
+		err_t rc = netconn_recv_tcp_pbuf_flags(conn, &data, NETCONN_NOAUTORCVD);
 
-		alreadyRead += lengthRead;
-		if (pb == nullptr || alreadyRead >= TCP_MSS)
+		while(rc == ERR_OK) {
+			if (readBuf == nullptr) {
+				readBuf = data;
+				readIndex = alreadyRead = 0;
+			} else {
+				pbuf_cat(readBuf, data);
+			}
+			data = nullptr;
+			rc = netconn_recv_tcp_pbuf_flags(conn, &data, NETCONN_NOAUTORCVD);
+		}
+
+		if (rc != ERR_WOULDBLOCK)
 		{
-			netconn_tcp_recvd(ownPcb, alreadyRead);
-			alreadyRead = 0;
+			if (rc == ERR_RST || rc == ERR_CLSD || rc == ERR_CONN)
+			{
+				SetState(ConnState::otherEndClosed);
+			}
+			else
+			{
+				Terminate(false);
+			}
 		}
 	}
-	return lengthRead;
+	else if (state == ConnState::closePending)
+	{
+		Close();
+	}
 }
 
-size_t Connection::CanRead() const
+// Close the connection.
+// If 'external' is true then the Duet main processor has requested termination, so we free up the connection.
+// Otherwise it has failed because of an internal error, and we set the state to 'aborted'. The Duet main processor will see this and send a termination request,
+// which will free it up.
+void Connection::Close()
 {
-	return ((state == ConnState::connected || state == ConnState::otherEndClosed) && pb != nullptr)
-			? pb->tot_len - readIndex : 0;
+	if (state == ConnState::otherEndClosed ||  state == ConnState::connected)
+	{
+		// Shut down the transmission, sending FIN to peer.
+		netconn_shutdown(conn, false, true);
+		SetState(ConnState::closePending);
+		FreePbuf();
+	}
+
+	// Closing and deleting the connection is handled in a separate task.
+	// While transmission has been shut down, only offically set this
+	// connection free when the connection has been sent to this task.
+	if (closePendingCnt < MaxConnections)
+	{
+		ConnectionTaskEvent cmd =
+		{
+			.event = ConnectionTaskEventType::CLOSE,
+			.conn = conn
+		};
+
+		if (xQueueSend(connectionQueue, &cmd, 0) == pdTRUE)
+		{
+			closePendingCnt++;
+			SetState(ConnState::free);
+			conn = nullptr;
+		}
+	}
+}
+
+
+void Connection::Terminate(bool external)
+{
+	if (conn) {
+		// Terminate immediately
+		netconn_close(conn);
+		netconn_delete(conn);
+		conn = nullptr;
+	}
+	FreePbuf();
+	SetState((external) ? ConnState::free : ConnState::aborted);
+}
+
+void Connection::SetConnection(struct netconn* conn, bool direction)
+{
+	this->conn = conn;
+	localPort = conn->pcb.tcp->local_port;
+	remotePort = conn->pcb.tcp->remote_port;
+	remoteIp = conn->pcb.tcp->remote_ip.u_addr.ip4.addr;
+	readIndex = alreadyRead = 0;
+	this->direction = direction;
+	SetState(ConnState::connected);
+}
+
+void Connection::GetStatus(ConnStatusResponse& resp) const
+{
+	resp.socketNumber = number;
+	resp.state = state;
+	resp.bytesAvailable = CanRead();
+	resp.writeBufferSpace = CanWrite();
+	resp.localPort = localPort;
+	resp.remotePort = remotePort;
+	resp.remoteIp = remoteIp;
+	resp.direction = direction;
+}
+
+void Connection::FreePbuf()
+{
+	if (readBuf != nullptr)
+	{
+		pbuf_free(readBuf);
+		readBuf = nullptr;
+	}
 }
 
 void Connection::Report()
@@ -299,48 +292,12 @@ void Connection::Report()
 	}
 }
 
-// Callback functions
-int Connection::Accept(struct netconn *pcb, int dir)
-{
-	ownPcb = pcb;
-	pb = nullptr;
-	localPort = pcb->pcb.tcp->local_port;
-	remotePort = pcb->pcb.tcp->remote_port;
-	remoteIp = pcb->pcb.tcp->remote_ip.u_addr.ip4.addr;
-	readIndex = alreadyRead = 0;
-	direction = dir;
-	netconn_set_nonblocking(pcb, 1);
-	SetState(direction == Incoming ? ConnState::connected : ConnState::connecting);
-	return ERR_OK;
-}
-
-void Connection::FreePbuf()
-{
-	if (pb != nullptr)
-	{
-		pbuf_free(pb);
-		pb = nullptr;
-	}
-}
-
 // Static functions
-
-/*static*/ Connection *Connection::Allocate()
-{
-	for (size_t i = 0; i < MaxConnections; ++i)
-	{
-		if (connectionList[i]->state == ConnState::free)
-		{
-			return connectionList[i];
-		}
-	}
-	return nullptr;
-}
 
 /*static*/ void Connection::Init()
 {
-	closeQueue = xQueueCreate(MaxConnections, sizeof(struct netconn*));
-	xTaskCreate(connCloseTask, "connCloseTask", CONN_CLOSE_STACK, NULL, CONN_CLOSE_PRIO, NULL);
+	connectionQueue = xQueueCreate(MaxConnections, sizeof(ConnectionTaskEvent));
+	xTaskCreate(ConnectionTask, "ConnectionTask", CONNECTION_TASK, NULL, CONNECTION_PRIO, NULL);
 
 	for (size_t i = 0; i < MaxConnections; ++i)
 	{
@@ -350,13 +307,14 @@ void Connection::FreePbuf()
 
 /* static */ bool Connection::Connect(uint32_t remoteIp, uint16_t remotePort, uint16_t localPort)
 {
-	struct netconn * tempPcb = netconn_new_with_callback(NETCONN_TCP, netconnCb);
+	struct netconn * tempPcb = netconn_new_with_callback(NETCONN_TCP, ConnectCallback);
 	if (tempPcb == nullptr)
 	{
-		debugPrintAlways("can't allocate PCB\n");
+		debugPrintAlways("can't allocate connection\n");
 		return false;
 	}
 	netconn_set_nonblocking(tempPcb, 1);
+	ip_set_option(tempPcb->pcb.tcp, SOF_REUSEADDR); 			// not sure we need this, but the Arduino HTTP server does it
 
 	err_t rc = 0;
 
@@ -368,24 +326,9 @@ void Connection::FreePbuf()
 		{
 			netconn_close(tempPcb);
 			netconn_delete(tempPcb);
-			debugPrintAlways("can't bind PCB\n");
+			debugPrintAlways("can't bind connection\n");
 			return false;
 		}
-	}
-
-	ip_addr_t tempIp;
-	memset(&tempIp, 0, sizeof(tempIp));
-	tempIp.u_addr.ip4.addr = remoteIp;
-	ip_set_option(tempPcb->pcb.tcp, SOF_REUSEADDR); 			// not sure we need this, but the Arduino HTTP server does it
-
-	rc = netconn_connect(tempPcb, &tempIp, remotePort);
-
-	if (!(rc == ERR_OK || rc == ERR_INPROGRESS))
-	{
-		netconn_close(tempPcb);
-		netconn_delete(tempPcb);
-		debugPrintfAlways("can't connect: %d\n", (int)rc);
-		return false;
 	}
 
 	Connection * const conn = Connection::Allocate();
@@ -397,12 +340,159 @@ void Connection::FreePbuf()
 		debugPrintfAlways("can't connect: %d\n", (int)rc);
 		return false;
 	}
+	conn->conn = tempPcb;
 
-	// Find out the index of the connection allocated
-	conn->Accept(tempPcb, Outgoing);
+	// Since the member 'socket' is not used, use it to store
+	// reference to the owning Connection of the netconn.
+	static_assert(sizeof(tempPcb->socket) == sizeof(conn));
+	tempPcb->socket = reinterpret_cast<int>(conn);
 
-	// Return the index
+	ip_addr_t tempIp;
+	memset(&tempIp, 0, sizeof(tempIp));
+	tempIp.u_addr.ip4.addr = remoteIp;
+	rc = netconn_connect(tempPcb, &tempIp, remotePort);
+
+	if (!(rc == ERR_OK || rc == ERR_INPROGRESS))
+	{
+		conn->Terminate(true);
+		debugPrintfAlways("can't connect: %d\n", (int)rc);
+		return false;
+	}
+
+	conn->SetState(ConnState::connecting);
 	return true;
+}
+
+
+bool Connection::Listen(uint16_t port, uint32_t ip, uint8_t protocol, uint16_t maxConns)
+{
+	// See if we are already listing for this
+	for (Listener *p = Listener::List(); p != nullptr; )
+	{
+		Listener *n = p->GetNext();
+		if (p->GetPort() == port)
+		{
+			if (maxConns != 0 && (p->GetIp() == IPADDR_ANY || p->GetIp() == ip))
+			{
+				// already listening, so nothing to do
+				debugPrintf("already listening on port %u\n", port);
+				return true;
+			}
+			if (maxConns == 0 || ip == IPADDR_ANY)
+			{
+				p->Stop();
+				debugPrintf("stopped listening on port %u\n", port);
+			}
+		}
+		p = n;
+	}
+
+	if (maxConns == 0)
+	{
+		return true;
+	}
+
+	if (protocol == protocolFtpData)
+	{
+		maxConns = 1;
+	}
+
+	// Setup LWIP listening connection.
+	struct netconn * tempPcb = netconn_new_with_callback(NETCONN_TCP, ListenCallback);
+	if (tempPcb == nullptr)
+	{
+		debugPrintAlways("can't allocate PCB\n");
+		return false;
+	}
+	netconn_set_nonblocking(tempPcb, 1);
+
+	ip_addr_t tempIp;
+	memset(&tempIp, 0, sizeof(tempIp));
+	tempIp.u_addr.ip4.addr = ip;
+	ip_set_option(tempPcb->pcb.tcp, SOF_REUSEADDR); 			// not sure we need this, but the Arduino HTTP server does it
+	err_t rc = netconn_bind(tempPcb, &tempIp, port);
+	if (rc != ERR_OK)
+	{
+		netconn_close(tempPcb);
+		netconn_delete(tempPcb);
+		debugPrintfAlways("can't bind PCB: %d\n", (int)rc);
+		return false;
+	}
+
+	return Listener::Start(port, ip, protocol, maxConns, tempPcb);
+}
+
+void Connection::Dismiss(uint16_t port)
+{
+	for (Listener *p = Listener::List(); p != nullptr; )
+	{
+		Listener *n = p->GetNext();
+		if (port == 0 || port == p->GetPort())
+		{
+			p->Stop();
+		}
+		p = n;
+	}
+}
+
+/*static*/ void Connection::TerminateAll()
+{
+	for (size_t i = 0; i < MaxConnections; ++i)
+	{
+		Connection::Get(i).Terminate(true);
+	}
+}
+
+/*static*/ uint16_t Connection::GetPortByProtocol(uint8_t protocol)
+{
+	for (Listener *p = Listener::List(); p != nullptr; p = p->GetNext())
+	{
+		if (p->GetProtocol() == protocol)
+		{
+			return p->GetPort();
+		}
+	}
+	return 0;
+}
+
+/*static*/ void Connection::ReportConnections()
+{
+	ets_printf("Conns");
+	for (size_t i = 0; i < MaxConnections; ++i)
+	{
+		ets_printf("%c %u:", (i == 0) ? ':' : ',', i);
+		connectionList[i]->Report();
+	}
+	ets_printf("\n");
+}
+
+/*static*/ void Connection::GetSummarySocketStatus(uint16_t& connectedSockets, uint16_t& otherEndClosedSockets)
+{
+	connectedSockets = 0;
+	otherEndClosedSockets = 0;
+	for (size_t i = 0; i < MaxConnections; ++i)
+	{
+		if (Connection::Get(i).GetState() == ConnState::connected)
+		{
+			connectedSockets |= (1 << i);
+		}
+		else if (Connection::Get(i).GetState() == ConnState::otherEndClosed)
+		{
+			otherEndClosedSockets |= (1 << i);
+		}
+	}
+}
+
+/*static*/ Connection *Connection::Allocate()
+{
+	for (size_t i = 0; i < MaxConnections; ++i)
+	{
+		if (connectionList[i]->state == ConnState::free)
+		{
+			return connectionList[i];
+		}
+	}
+	return nullptr;
 }
 
 /*static*/ uint16_t Connection::CountConnectionsOnPort(uint16_t port)
@@ -428,72 +518,124 @@ void Connection::FreePbuf()
 	return count;
 }
 
-/*static*/ void Connection::TerminateAll()
+/*static*/ void Connection::ConnectionTask(void* p)
 {
-	for (size_t i = 0; i < MaxConnections; ++i)
+	while (true)
 	{
-		Connection::Get(i).Terminate(true);
-	}
-}
+		ConnectionTaskEvent cmd;
+		cmd.event = ConnectionTaskEventType::NONE;
+		cmd.conn = nullptr;
 
-/*static*/ void Connection::GetSummarySocketStatus(uint16_t& connectedSockets, uint16_t& otherEndClosedSockets)
-{
-	connectedSockets = 0;
-	otherEndClosedSockets = 0;
-	for (size_t i = 0; i < MaxConnections; ++i)
-	{
-		if (Connection::Get(i).GetState() == ConnState::connected)
+		xQueueReceive(connectionQueue, &cmd, pdMS_TO_TICKS(2));
+
+		switch (cmd.event)
 		{
-			connectedSockets |= (1 << i);
-		}
-		else if (Connection::Get(i).GetState() == ConnState::otherEndClosed)
-		{
-			otherEndClosedSockets |= (1 << i);
-		}
-	}
-}
-
-/*static*/ void Connection::ReportConnections()
-{
-	ets_printf("Conns");
-	for (size_t i = 0; i < MaxConnections; ++i)
-	{
-		ets_printf("%c %u:", (i == 0) ? ':' : ',', i);
-		connectionList[i]->Report();
-	}
-	ets_printf("\n");
-}
-
-
-/*static*/ void Connection::netconnCb(struct netconn *conn, enum netconn_evt evt, u16_t len)
-{
-	if (evt == NETCONN_EVT_SENDPLUS)
-	{
-		for (int i = 0; i < MaxConnections; i++)
-		{
-			Connection * const _conn = connectionList[i];
-			if (_conn && _conn->ownPcb == conn && _conn->state == ConnState::connecting)
+		case ConnectionTaskEventType::CLOSE:
 			{
-				_conn->SetState(ConnState::connected);
-				break;
+				for (int i = 0; i < MaxConnections; i++)
+				{
+					if (closePending[i] == nullptr)
+					{
+						closePending[i] = cmd.conn;
+						break;
+					}
+				}
 			}
+			break;
+
+		case ConnectionTaskEventType::ACCEPT:
+			{
+				struct netconn *newConn;
+				err_t rc = netconn_accept(cmd.conn, &newConn);
+				if (rc == ERR_OK)
+				{
+					Listener* p = reinterpret_cast<Listener*>(cmd.conn->socket);
+					const uint16_t numConns = Connection::CountConnectionsOnPort(p->GetPort());
+					if (numConns < p->GetMaxConnections())
+					{
+						Connection * const conn = Connection::Allocate();
+						if (conn != nullptr)
+						{
+							netconn_set_nonblocking(newConn, 1);
+							conn->SetConnection(newConn, Incoming);
+						}
+						else
+						{
+							debugPrintfAlways("refused conn on port %u no free conn\n", p->GetPort());
+						}
+					}
+					else
+					{
+						debugPrintfAlways("refused conn on port %u already %u conns\n", p->GetPort(), numConns);
+					}
+				}
+			}
+			break;
+
+		default:
+			// Check if the pending connections need closing
+			{
+				for (int i = 0; i < MaxConnections; i++)
+				{
+					if (closePending[i] != nullptr)
+					{
+						if ((closePending[i]->pcb.tcp && closePending[i]->pcb.tcp->unacked) && closeTimer[i] < MaxAckTime)
+						{
+							closeTimer[i] += 2;
+						}
+						else
+						{
+							netconn_close(closePending[i]);
+							netconn_delete(closePending[i]);
+							closePending[i] = nullptr;
+							closePendingCnt--;
+						}
+					}
+				}
+			}
+			break;
 		}
 	}
-	else if (evt == NETCONN_EVT_ERROR)
+}
+
+/*static*/ void Connection::ListenCallback(struct netconn *conn, enum netconn_evt evt, u16_t len)
+{
+	if (evt == NETCONN_EVT_RCVPLUS && len == 0)
 	{
-		for (int i = 0; i < MaxConnections; i++)
+		if (conn->socket > 0)
 		{
-			Connection * const _conn = connectionList[i];
-			if (_conn && _conn->ownPcb == conn && _conn->state == ConnState::connecting)
+			ConnectionTaskEvent cmd;
+			cmd.event = ConnectionTaskEventType::ACCEPT;
+			cmd.conn = conn;
+			xQueueSend(Connection::connectionQueue, &cmd, portMAX_DELAY);
+		}
+	}
+}
+
+/*static*/ void Connection::ConnectCallback(struct netconn *conn, enum netconn_evt evt, u16_t len)
+{
+	if (conn->socket > 0)
+	{
+		Connection *_conn = reinterpret_cast<Connection*>(conn->socket);
+		if (_conn->state == ConnState::connecting)
+		{
+			if (evt == NETCONN_EVT_SENDPLUS)
+			{
+				_conn->SetConnection(conn, Outgoing);
+			}
+			else if (evt == NETCONN_EVT_ERROR)
 			{
 				_conn->SetState(ConnState::otherEndClosed);
-				break;
 			}
 		}
 	}
 }
 
 // Static data
-Connection *Connection::connectionList[MaxConnections] = { 0 };
+QueueHandle_t Connection::connectionQueue = nullptr;
+int Connection::closePendingCnt = 0;
+int Connection::closeTimer[MaxConnections];
+netconn * Connection::closePending[MaxConnections];
+Connection *Connection::connectionList[MaxConnections];
 
 // End
