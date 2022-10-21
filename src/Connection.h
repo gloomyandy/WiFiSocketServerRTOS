@@ -68,14 +68,19 @@ private:
 	struct netconn *conn;		// the pcb that corresponds to this connection
 	volatile ConnState state;
 
-	pbuf *readBuf;				// the buffers holding data we have received that has not yet been taken
+	struct pbuf *readBuf;		// the buffers holding data we have received that has not yet been taken
 	size_t readIndex;			// how much data we have already read from the current pbuf
 	size_t alreadyRead;			// how much data we read from previous pbufs and didn't tell LWIP about yet
 
-	static QueueHandle_t connectionQueue;
+	static TaskHandle_t connectionTask;
+
+	static int acceptPendingCnt;
+	static struct netconn *acceptPending[MaxConnections];
+
 	static int closePendingCnt;
-	static int closeTimer[MaxConnections];
 	static struct netconn *closePending[MaxConnections];
+	static int closeTimer[MaxConnections];
+
 	static Connection *connectionList[MaxConnections];
 };
 

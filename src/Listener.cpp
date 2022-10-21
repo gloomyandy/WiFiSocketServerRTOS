@@ -38,13 +38,13 @@ Listener *Listener::freeList = nullptr;
 		static_assert(sizeof(conn->socket) == sizeof(res));
 		conn->socket = reinterpret_cast<int>(res);
 
-		err_t rc = netconn_listen_with_backlog(conn, Backlog);
+		err_t rc = netconn_listen_with_backlog(conn, maxConns);
 
 		if (rc != ERR_OK)
 		{
 			netconn_close(conn);
 			netconn_delete(conn);
-			debugPrintAlways("netconn_listen failed\n");
+			debugPrintfAlways("Listen failed: %d\n", rc);
 			return false;
 		}
 
@@ -54,7 +54,7 @@ Listener *Listener::freeList = nullptr;
 		res->maxConnections = maxConns;
 		res->conn = conn;
 
-		freeList = res->next; 
+		freeList = res->next;
 		res->next = activeList;
 		activeList = res;
 	}
@@ -67,7 +67,6 @@ Listener *Listener::freeList = nullptr;
 	return true;
 }
 
-
 /*static*/ void Listener::Stop()
 {
 	netconn_close(conn);
@@ -79,12 +78,10 @@ Listener *Listener::freeList = nullptr;
 		if (*pp == this)
 		{
 			*pp = next;
-			next = nullptr;
+			next = freeList;
+			freeList = this;
 			return;
 		}
 	}
-
-	next = freeList;
-	freeList = this;
 }
 // End
