@@ -24,6 +24,7 @@ public:
 	uint8_t GetProtocol() { return protocol; }
 	uint16_t GetMaxConnections() { return maxConnections; }
 	Listener* GetNext() { return next; }
+	struct netconn* GetConnection() { return conn; }
 
 	void Stop();
 
