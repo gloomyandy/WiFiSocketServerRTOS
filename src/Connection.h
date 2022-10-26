@@ -77,7 +77,6 @@ private:
 	static volatile int closePendingCnt;
 	static volatile uint32_t closePendingCheck;
 	static struct netconn *closePending[MaxConnections];
-	static int closeTimer[MaxConnections];
 
 	static Connection *connectionList[MaxConnections];
 };

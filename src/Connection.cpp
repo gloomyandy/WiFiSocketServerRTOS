@@ -508,16 +508,19 @@ void Connection::Dismiss(uint16_t port)
 
 /*static*/ void Connection::ConnectionTask(void* p)
 {
+	static int closeTimer[MaxConnections];
+
 	for (int i = 0; i < MaxConnections; i++)
 	{
 		closeTimer[i] = MaxAckTime;
-		closePending[i] = nullptr;
 	}
+
+	uint32_t nextCloseTimeout = portMAX_DELAY;
 
 	while (true)
 	{
 		ConnectionEvent evt;
-		BaseType_t res = xQueueReceive(connectionQueue, &evt, portMAX_DELAY);
+		BaseType_t res = xQueueReceive(connectionQueue, &evt, nextCloseTimeout);
 
 		if (res == pdTRUE)
 		{
@@ -592,12 +595,64 @@ void Connection::Dismiss(uint16_t port)
 						closeTimer[idx] = MaxAckTime;
 						closePending[idx] = nullptr;
 						closePendingCnt--;
+
+						// Since a connection has been closed successfully, this means
+						// the next close timeout should be updated.
+						nextCloseTimeout = 0;
 					}
 
 					closePendingCheck &= ~(0b1 << evt.conn->socket);
 				}
 			}
 			else { }
+		}
+
+		if (res == pdFALSE || nextCloseTimeout == 0)
+		{
+			// Find the minimum timeout, since it just expired.
+			int minTimeout = MaxAckTime;
+
+			for (int i = 0; i < MaxConnections; i++)
+			{
+				if (closeTimer[i] < minTimeout)
+				{
+					minTimeout = closeTimer[i];
+				}
+			}
+
+			// Close the corresponding connection for all those that expired.
+			// Find the next timeout.
+			int newMinTimeout = MaxAckTime;
+			for (int i = 0; i < MaxConnections; i++)
+			{
+				closeTimer[i] -= minTimeout;
+
+				if (closeTimer[i] <= 0)
+				{
+					int idx = closePending[i]->socket;
+					netconn_close(closePending[i]);
+					netconn_delete(closePending[i]);
+					closeTimer[idx] = MaxAckTime;
+					closePending[idx] = nullptr;
+					closePendingCnt--;
+				}
+				else
+				{
+					if (closeTimer[i] < newMinTimeout)
+					{
+						newMinTimeout = closeTimer[i];
+					}
+				}
+			}
+
+			if (closePendingCnt)
+			{
+				nextCloseTimeout = pdMS_TO_TICKS(newMinTimeout);
+			}
+			else
+			{
+				nextCloseTimeout = portMAX_DELAY;
+			}
 		}
 	}
 }
@@ -664,7 +719,6 @@ void Connection::Dismiss(uint16_t port)
 QueueHandle_t Connection::connectionQueue = nullptr;
 volatile int Connection::closePendingCnt = 0;
 volatile uint32_t Connection::closePendingCheck = 0;
-int Connection::closeTimer[MaxConnections];
 netconn * Connection::closePending[MaxConnections];
 Connection *Connection::connectionList[MaxConnections];
 
