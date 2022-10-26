@@ -72,12 +72,10 @@ private:
 	size_t readIndex;			// how much data we have already read from the current pbuf
 	size_t alreadyRead;			// how much data we read from previous pbufs and didn't tell LWIP about yet
 
-	static TaskHandle_t connectionTask;
+	static QueueHandle_t connectionQueue;
 
-	static int acceptPendingCnt;
-	static struct netconn *acceptPending[MaxConnections];
-
-	static int closePendingCnt;
+	static volatile int closePendingCnt;
+	static volatile uint32_t closePendingCheck;
 	static struct netconn *closePending[MaxConnections];
 	static int closeTimer[MaxConnections];
 
