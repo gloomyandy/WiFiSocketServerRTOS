@@ -42,7 +42,6 @@ Listener *Listener::freeList = nullptr;
 
 		if (rc != ERR_OK)
 		{
-			netconn_close(conn);
 			netconn_delete(conn);
 			debugPrintfAlways("Listen failed: %d\n", rc);
 			return false;
@@ -69,7 +68,6 @@ Listener *Listener::freeList = nullptr;
 
 /*static*/ void Listener::Stop()
 {
-	netconn_close(conn);
 	netconn_delete(conn);
 
 	Listener **pp = &activeList;
