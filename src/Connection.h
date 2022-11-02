@@ -13,6 +13,9 @@
 #include <cstdint>
 #include <cstddef>
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "lwip/api.h"
 
 #include "include/MessageFormats.h"			// for ConnState
@@ -28,16 +31,16 @@ public:
 	size_t Write(const uint8_t *data, size_t length, bool doPush, bool closeAfterSending);
 	size_t CanWrite() const;
 
-	void Poll();
 	void Close();
 	void Terminate(bool external);
 	void GetStatus(ConnStatusResponse& resp) const;
 
 	// Static functions
 	static void Init();
-	static bool Connect(uint32_t remoteIp, uint16_t remotePort, uint16_t localPort);
+	static bool Connect(uint32_t remoteIp, uint16_t remotePort);
 	static bool Listen(uint16_t port, uint32_t ip, uint8_t protocol, uint16_t maxConns);
 	static void Dismiss(uint16_t port);
+	static void PollAll();
 	static void TerminateAll();
 
 	static Connection& Get(uint8_t num) { return *connectionList[num]; }
@@ -46,6 +49,7 @@ public:
 	static void ReportConnections();
 
 private:
+	void Poll();
 	void SetConnection(struct netconn *conn, bool direction);
 	void SetState(ConnState st) { state = st; }
 	ConnState GetState() const { return state; }
@@ -64,7 +68,6 @@ private:
 	uint16_t localPort;
 	uint16_t remotePort;
 	uint32_t remoteIp;
-	uint8_t direction;
 	struct netconn *conn;		// the pcb that corresponds to this connection
 	volatile ConnState state;
 
@@ -73,9 +76,9 @@ private:
 	size_t alreadyRead;			// how much data we read from previous pbufs and didn't tell LWIP about yet
 
 	static QueueHandle_t connectionQueue;
+	static SemaphoreHandle_t allocateMutex;
 
 	static volatile int closePendingCnt;
-	static volatile uint32_t closePendingCheck;
 	static struct netconn *closePending[MaxConnections];
 
 	static Connection *connectionList[MaxConnections];

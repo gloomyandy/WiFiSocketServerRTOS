@@ -1421,7 +1421,6 @@ void ProcessRequest()
 				messageHeaderIn.hdr.param32 = hspi.transfer32(sizeof(ConnStatusResponse));
 				Connection& conn = Connection::Get(messageHeaderIn.hdr.socketNumber);
 				ConnStatusResponse resp;
-				conn.Poll();
 				conn.GetStatus(resp);
 				Connection::GetSummarySocketStatus(resp.connectedSockets, resp.otherEndClosedSockets);
 				hspi.transferDwords(reinterpret_cast<const uint32_t *>(&resp), nullptr, NumDwords(sizeof(resp)));
@@ -1464,9 +1463,9 @@ void ProcessRequest()
 				ListenOrConnectData lcData;
 				hspi.transferDwords(nullptr, reinterpret_cast<uint32_t*>(&lcData), NumDwords(sizeof(lcData)));
 
-				ets_printf("ip: %u  port: %d  local: %d\n", lcData.remoteIp, lcData.port, lcData.localPort);
+				ets_printf("ip: %u  port: %d  local: %d\n", lcData.remoteIp, lcData.port);
 
-				if (!Connection::Connect(lcData.remoteIp, lcData.port, lcData.localPort))
+				if (!Connection::Connect(lcData.remoteIp, lcData.port))
 				{
 					lastError = "Connection creation failed";
 				}
@@ -1676,6 +1675,8 @@ void loop()
 		prevLastError = lastError;
 		xTimerReset(tfrReqExpTmr, portMAX_DELAY);
 	}
+
+	Connection::PollAll();
 
 	if (gpio_get_level(SamTfrReadyPin) == 1 &&
 		(flags == 0 || (flags & SAM_TFR_READY))) {

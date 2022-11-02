@@ -34,7 +34,8 @@ Listener *Listener::freeList = nullptr;
 	if (res)
 	{
 		// Since the member 'socket' is not used, use it to store
-		// reference to the owning Listener of the netconn.
+		// reference to the owning Listener of the netconn. Do this before
+		// netconn_listen, to set before the callback is called.
 		static_assert(sizeof(conn->socket) == sizeof(res));
 		conn->socket = reinterpret_cast<int>(res);
 
@@ -42,6 +43,7 @@ Listener *Listener::freeList = nullptr;
 
 		if (rc != ERR_OK)
 		{
+			netconn_close(conn);
 			netconn_delete(conn);
 			debugPrintfAlways("Listen failed: %d\n", rc);
 			return false;
@@ -68,6 +70,7 @@ Listener *Listener::freeList = nullptr;
 
 /*static*/ void Listener::Stop()
 {
+	netconn_close(conn);
 	netconn_delete(conn);
 
 	Listener **pp = &activeList;
