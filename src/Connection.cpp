@@ -516,7 +516,7 @@ void Connection::Dismiss(uint16_t port)
 
 /*static*/ void Connection::ConnectionTask(void* p)
 {
-	static uint32_t closeTimer[MaxConnections];
+	static int closeTimer[MaxConnections];
 
 	for (int i = 0; i < MaxConnections; i++)
 	{
@@ -525,153 +525,147 @@ void Connection::Dismiss(uint16_t port)
 
 	int nextClose = -1;
 	int nextWait = MaxAckTime;
-	int lastLoop = 0;
+	unsigned long lastLoop = millis();
 
 	while (true)
 	{
 		ConnectionEvent evt;
-		evt.type = ConnectionEventType::Terminate;
-		evt.data.i = nextClose;
 
+		// If no connection in the pending list, wait indefinitely.
 		uint32_t waitTime = (nextClose < 0) ? portMAX_DELAY : pdMS_TO_TICKS(nextWait);
 
 		ets_printf("next wait: %u\n", waitTime);
 		BaseType_t res = xQueueReceive(connectionQueue, &evt, waitTime);
-
 		ets_printf("res: %d  evt: %d\n", res == pdTRUE, static_cast<int>(evt.type));
 
-		int now = millis();
-		bool evalClosePending = false;
+		unsigned long now = millis();
 
-		if (evt.type == ConnectionEventType::Accept)
+		if (res == pdTRUE)
 		{
-			struct netconn *conn, *newConn;
-			conn = static_cast<struct netconn*>(evt.data.ptr);
-			err_t rc = netconn_accept(conn, &newConn);
-			if (rc == ERR_OK)
+			if (evt.type == ConnectionEventType::Accept)
 			{
-				Listener* p = reinterpret_cast<Listener*>(conn->socket);
-				const uint16_t numConns = Connection::CountConnectionsOnPort(p->GetPort());
-				if (numConns < p->GetMaxConnections())
+				struct netconn *conn, *newConn;
+				conn = static_cast<struct netconn*>(evt.data.ptr);
+				err_t rc = netconn_accept(conn, &newConn);
+				if (rc == ERR_OK)
 				{
-					Connection * const c = Connection::Allocate();
-					if (c != nullptr)
+					Listener* p = reinterpret_cast<Listener*>(conn->socket);
+					const uint16_t numConns = Connection::CountConnectionsOnPort(p->GetPort());
+					if (numConns < p->GetMaxConnections())
 					{
-						netconn_set_nonblocking(newConn, 1);
-						c->SetConnection(newConn, Incoming);
-						if (p->GetProtocol() == protocolFtpData)
+						Connection * const c = Connection::Allocate();
+						if (c != nullptr)
 						{
-							debugPrintf("accept conn, stop listen on port %u\n", port);
-							p->Stop();	// don't listen for further connections
+							netconn_set_nonblocking(newConn, 1);
+							c->SetConnection(newConn, Incoming);
+							if (p->GetProtocol() == protocolFtpData)
+							{
+								debugPrintf("accept conn, stop listen on port %u\n", port);
+								p->Stop();	// don't listen for further connections
+							}
+						}
+						else
+						{
+							netconn_close(newConn);
+							netconn_delete(newConn);
+							debugPrintfAlways("refused conn on port %u no free conn\n", p->GetPort());
 						}
 					}
 					else
 					{
 						netconn_close(newConn);
 						netconn_delete(newConn);
-						debugPrintfAlways("refused conn on port %u no free conn\n", p->GetPort());
+						debugPrintfAlways("refused conn on port %u already %u conns\n", p->GetPort(), numConns);
 					}
 				}
-				else
-				{
-					netconn_close(newConn);
-					netconn_delete(newConn);
-					debugPrintfAlways("refused conn on port %u already %u conns\n", p->GetPort(), numConns);
-				}
 			}
-
-			nextWait -= (now - lastLoop);
-		}
-		else if (evt.type == ConnectionEventType::Close)
-		{
-			struct netconn *conn = static_cast<struct netconn*>(evt.data.ptr);
-			for (int i = 0; i < MaxConnections; i++)
+			else if (evt.type == ConnectionEventType::Close)
 			{
-				if (closePending[i] == nullptr)
+				struct netconn *conn = static_cast<struct netconn*>(evt.data.ptr);
+				for (int i = 0; i < MaxConnections; i++)
 				{
-					conn->socket = i;
-					break;
-				}
-			}
-
-			closePending[conn->socket] = conn;
-			closeTimer[conn->socket] = MaxAckTime;
-			// Send a FIN packet, which triggers an event, after the conditions
-			// for sending ConnectionEventType::Terminate in the callbacks has been set above.
-			netconn_shutdown(closePending[conn->socket], false, true);
-
-			// No pending close connections previously, the next deadline should be of
-			// the connection just added.
-			if (nextClose < 0)
-			{
-				nextClose = conn->socket;
-				nextWait = MaxAckTime;
-				lastLoop = now;
-			}
-
-			nextWait -= (now - lastLoop);
-		}
-		else if (evt.type == ConnectionEventType::Terminate)
-		{
-			int idx = evt.data.i;
-			struct netconn *conn = closePending[idx];
-
-			// This connection might have been closed in a previous iteration.
-			// Since there is no way to cancel a ConnectionEventType::Terminate command in the queue,
-			// re-check the connection still exists here.
-			if (conn)
-			{
-				assert(idx == conn->socket);
-				struct pbuf* buf = nullptr;
-				err_t rc = ERR_OK;
-
-				if (res == pdTRUE)
-				{
-					rc = netconn_recv_tcp_pbuf(conn, &buf);
-				}
-
-				// err_t rc = (res == pdTRUE) ? (netconn_recv_tcp_pbuf(conn, &buf)) : ERR_ABRT;
-
-				if (rc != ERR_OK || !buf || buf->tot_len == 0)
-				{
-					if (idx == nextClose)
+					if (closePending[i] == nullptr)
 					{
-						// The connection to be closed will trigger a re-evaluation for the next timeout.
-						// Since the other timeouts in the closeTimers array are not updated every loop,
-						// they would have to be updated in the re-evaluation.
-						nextWait = (res == pdTRUE) ? closeTimer[idx] - nextWait : closeTimer[idx];
-						evalClosePending = true;
+						conn->socket = i;
+						break;
 					}
+				}
 
-					netconn_close(conn);
-					netconn_delete(conn);
-					closePending[idx] = nullptr;
+				closePending[conn->socket] = conn;
+				closeTimer[conn->socket] = MaxAckTime;
+				// Send a FIN packet, which triggers an event, after the conditions
+				// for sending ConnectionEventType::Terminate in the callbacks has been set above.
+				netconn_shutdown(closePending[conn->socket], false, true);
 
-					// This task can be pre-empted by Connection::Close in the main task,
-					// so decrease the pending count last. This way the main task should not
-					// exceed the max number of close pending connections.
-					closePendingCnt--;
-
-					ets_printf("terminate: %d\n", idx);
+				if (nextClose < 0)
+				{
+					// This is the first connection to add to the close pending list after some time.
+					// Since it is the only element, set it as the connection with the nearest expiry.
+					nextClose = conn->socket;
+					nextWait = MaxAckTime;
+					lastLoop = now;
 				}
 			}
-		}
-		else { }
+			else if (evt.type == ConnectionEventType::Terminate)
+			{
+				int idx = evt.data.i;
+				struct netconn *conn = closePending[idx];
 
-		if (evalClosePending)
+				// This connection might have been closed in a previous iteration.
+				// Since there is no way to cancel a ConnectionEventType::Terminate command in the queue,
+				// re-check the connection still exists here.
+				if (conn)
+				{
+					assert(idx == conn->socket);
+					struct pbuf* buf = nullptr;
+
+					err_t rc = netconn_recv_tcp_pbuf(conn, &buf);
+
+					if (rc != ERR_OK || !buf || buf->tot_len == 0)
+					{
+						if (idx == nextClose)
+						{
+							// Closing the connection ahead of the timeout. Since the full timeout
+							// was not used, compute and store the time elapsed.
+							closeTimer[nextClose] -= nextWait;
+							nextWait = 0;
+						}
+
+						netconn_close(conn);
+						netconn_delete(conn);
+						closePending[idx] = nullptr;
+
+						// This task can be pre-empted by Connection::Close in the main task,
+						// so decrease the pending count last. This way the main task should not
+						// exceed the max number of close pending connections.
+						closePendingCnt--;
+					}
+				}
+			}
+			else { }
+
+			nextWait -= (nextClose < 0) ? 0 : (now - lastLoop);
+		}
+		else
 		{
-			ets_printf("re-eval\n");
+			// The full timeout was spent, and so closeTimer[nextClose] is not changed.
+			nextWait = 0;
+		}
+
+		if (nextWait <= 0)
+		{
+			int elapsed = closeTimer[nextClose];
+
 			// Update the other timeouts in the pending array.
 			for (int i = 0; i < MaxConnections; i++)
 			{
 				if (closePending[i])
 				{
-					closeTimer[i] -= nextWait;
+					closeTimer[i] -= elapsed;
 				}
 			}
 
-			// Find the next timeout, closing other connections that might have
-			// also had their timeouts expired.
+			// Find the next timeout, closing other connections that have the same expiry.
 			nextClose = -1;
 			nextWait = MaxAckTime;
 
@@ -697,17 +691,7 @@ void Connection::Dismiss(uint16_t port)
 				}
 			}
 		}
-		else
-		{
-			if (nextClose >= 0)
-			{
-				nextWait -= (now - lastLoop);
-			}
-		}
 
-		assert(nextWait > 0);
-
-		ets_printf("nextClose: %d   nextWait: %d\n");
 		lastLoop = now;
 	}
 }
