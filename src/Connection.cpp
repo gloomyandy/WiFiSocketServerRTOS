@@ -14,13 +14,10 @@
 #include "Misc.h"				// for millis
 #include "Config.h"
 
-#include "freertos/timers.h"
-
 typedef enum
 {
 	Accept,
 	Close,
-	CloseCheck,
 	Terminate,
 } ConnectionEventType;
 
@@ -519,28 +516,31 @@ void Connection::Dismiss(uint16_t port)
 
 /*static*/ void Connection::ConnectionTask(void* p)
 {
-	static TimerHandle_t closeTimer[MaxConnections];
+	static int closeTimer[MaxConnections];
 
 	for (int i = 0; i < MaxConnections; i++)
 	{
-		closeTimer[i] = xTimerCreate(NULL, pdMS_TO_TICKS(MaxAckTime), pdFALSE, (void*)i,
-			[](TimerHandle_t tim) {
-				int i = reinterpret_cast<int>(pvTimerGetTimerID(tim));
-				ConnectionEvent evt;
-				evt.type = ConnectionEventType::CloseCheck;
-				evt.data.i = i;
-				xQueueSend(connectionQueue, &evt, portMAX_DELAY);
-			});
-		xTimerStop(closeTimer[i], portMAX_DELAY);
+		closeTimer[i] = MaxAckTime;
 	}
+
+	int nextClose = -1;
+	int nextWait = MaxAckTime;
+	unsigned long last = millis();
 
 	while (true)
 	{
 		ConnectionEvent evt;
-		BaseType_t res = xQueueReceive(connectionQueue, &evt, portMAX_DELAY);
+
+		// If no connection in the pending list, wait indefinitely.
+		uint32_t waitTime = (nextClose < 0) ? portMAX_DELAY : pdMS_TO_TICKS(nextWait);
+		BaseType_t res = xQueueReceive(connectionQueue, &evt, waitTime);
+
+		unsigned long now = millis();
 
 		if (res == pdTRUE)
 		{
+			nextWait -= (nextClose < 0) ? 0 : (now - last);
+
 			if (evt.type == ConnectionEventType::Accept)
 			{
 				struct netconn *conn, *newConn;
@@ -589,34 +589,47 @@ void Connection::Dismiss(uint16_t port)
 						break;
 					}
 				}
+
 				closePending[conn->socket] = conn;
+				closeTimer[conn->socket] = MaxAckTime;
 				// Send a FIN packet, which triggers an event, after the conditions
-				// for sending ConnectionEventType::CloseCheck in the callbacks has been set above.
+				// for sending ConnectionEventType::Terminate in the callbacks has been set above.
 				netconn_shutdown(closePending[conn->socket], false, true);
-				xTimerReset(closeTimer[conn->socket], portMAX_DELAY);
+
+				if (nextClose < 0)
+				{
+					// This is the first connection to add to the close pending list after some time.
+					// Since it is the only element, set it as the connection with the nearest expiry.
+					nextClose = conn->socket;
+					nextWait = MaxAckTime;
+					last = now;
+				}
 			}
-			else if (evt.type == ConnectionEventType::CloseCheck || evt.type == ConnectionEventType::Terminate)
+			else if (evt.type == ConnectionEventType::Terminate)
 			{
 				int idx = evt.data.i;
 				struct netconn *conn = closePending[idx];
 
 				// This connection might have been closed in a previous iteration.
-				// Since there is no way to cancel a ConnectionEventType::CloseCheck command in the queue,
+				// Since there is no way to cancel a ConnectionEventType::Terminate command in the queue,
 				// re-check the connection still exists here.
 				if (conn)
 				{
 					assert(idx == conn->socket);
 					struct pbuf* buf = nullptr;
-					err_t rc = ERR_OK;
 
-					if (evt.type == ConnectionEventType::CloseCheck)
-					{
-						rc = netconn_recv_tcp_pbuf(conn, &buf);
-					}
+					err_t rc = netconn_recv_tcp_pbuf(conn, &buf);
 
-					if (evt.type == ConnectionEventType::Terminate || rc != ERR_OK || !buf || buf->tot_len == 0)
+					if (rc != ERR_OK || !buf || buf->tot_len == 0)
 					{
-						xTimerStop(closeTimer[idx], portMAX_DELAY);
+						if (idx == nextClose)
+						{
+							// Closing the connection ahead of the timeout. Since the full timeout
+							// was not used, compute and store the time elapsed.
+							closeTimer[idx] -= (nextWait < 0) ? 0 : nextWait;
+							nextWait = 0;
+						}
+
 						netconn_close(conn);
 						netconn_delete(conn);
 						closePending[idx] = nullptr;
@@ -629,7 +642,55 @@ void Connection::Dismiss(uint16_t port)
 				}
 			}
 			else { }
+
 		}
+		else
+		{
+			// The full timeout was spent, and so closeTimer[nextClose] is not changed.
+			nextWait = 0;
+		}
+
+		if (nextWait <= 0)
+		{
+			int elapsed = closeTimer[nextClose];
+
+			// Update the other timeouts in the pending array.
+			for (int i = 0; i < MaxConnections; i++)
+			{
+				if (closePending[i])
+				{
+					closeTimer[i] -= elapsed;
+				}
+			}
+
+			// Find the next timeout, closing other connections that have the same expiry.
+			nextClose = -1;
+			nextWait = MaxAckTime;
+
+			for (int i = 0; i < MaxConnections; i++)
+			{
+				if (closePending[i])
+				{
+					if (closeTimer[i] <= 0)
+					{
+						netconn_close(closePending[i]);
+						netconn_delete(closePending[i]);
+						closePending[i] = nullptr;
+						closePendingCnt--;
+					}
+					else
+					{
+						if (closeTimer[i] < nextWait)
+						{
+							nextClose = i;
+							nextWait = closeTimer[i];
+						}
+					}
+				}
+			}
+		}
+
+		last = now;
 	}
 }
 
@@ -639,7 +700,7 @@ void Connection::Dismiss(uint16_t port)
 			 && closePending[conn->socket] == conn)
 	{
 		ConnectionEvent evt;
-		evt.type = ConnectionEventType::CloseCheck;
+		evt.type = ConnectionEventType::Terminate;
 		evt.data.i = conn->socket;
 		xQueueSend(connectionQueue, &evt, portMAX_DELAY);
 	}
@@ -664,7 +725,7 @@ void Connection::Dismiss(uint16_t port)
 			 && closePending[conn->socket] == conn)
 	{
 		ConnectionEvent evt;
-		evt.type = ConnectionEventType::CloseCheck;
+		evt.type = ConnectionEventType::Terminate;
 		evt.data.i = conn->socket;
 		xQueueSend(connectionQueue, &evt, portMAX_DELAY);
 	}
