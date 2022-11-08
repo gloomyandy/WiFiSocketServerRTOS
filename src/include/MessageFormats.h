@@ -90,7 +90,6 @@ struct MessageHeaderSamToEsp
 	static const uint8_t FlagPush = 0x02;
 };
 
-
 enum class EspWiFiPhyMode {
 	B = 1,
 	G = 2,
@@ -230,8 +229,14 @@ struct MessageHeaderEspToSam
 
 static_assert(sizeof(MessageHeaderSamToEsp) == sizeof(MessageHeaderEspToSam), "Message header sizes don't match");
 
-// Now the message data formats
+enum class HTMode : uint8_t
+{
+	HT20 = 0,			// 20 Mhz channel width
+	HT40_ABOVE,			// 40 Mhz channel width, extra channel above primary channel
+	HT40_BELOW			// 40 Mhz channel width, extra channel below primary channel
+};
 
+// Now the message data formats
 struct NetworkStatusResponse
 {
 	// No need to include the network state here because that is included in the header
@@ -251,6 +256,17 @@ struct NetworkStatusResponse
 	char ssid[SsidLength];			// SSID of the router we are connected to, or our own SSDI
 	char hostName[64];				// name of the access point we are connected to, or our own access point name
 	uint32_t clockReg;				// the SPI clock register
+
+	// Added at version 2.1
+	uint32_t netmask;				// subnet mask of the network connected to/created
+	uint32_t gateway;				// endorsed gateway IP of the network connected to/created
+	uint32_t numReconnects;			// number of reconnections since the explicit STA connection by RRF
+	uint8_t  usingDhcpc;			// if the current ip, netmask, gateway was obtained through DHCP as a client
+	WiFiAuth auth;					// authentication method of the AP connected to in STA mode, in AP mode always WPA2-Personal
+	uint8_t channel : 4,			// primary channel used by the STA/AP connection
+			ht:	2,					// HT20, HT40 above, HT40 below
+			zero3: 2;				// unused, set to zero
+	uint8_t zero4;					// unused, set to zero
 };
 
 /* The reset reasons are coded as follows (see resetReasonTexts in file WiFiInterface.cpp in the RepRapFirmware project):
