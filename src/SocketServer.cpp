@@ -1458,16 +1458,23 @@ void ProcessRequest()
 
 		case NetworkCommand::connCreate:					// create a connection
 			{
-				messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
-
-				ListenOrConnectData lcData;
-				hspi.transferDwords(nullptr, reinterpret_cast<uint32_t*>(&lcData), NumDwords(sizeof(lcData)));
-
-				ets_printf("ip: %u  port: %d  local: %d\n", lcData.remoteIp, lcData.port);
-
-				if (!Connection::Connect(lcData.remoteIp, lcData.port))
+				Connection * const conn = Connection::Allocate();
+				if (conn)
 				{
-					lastError = "Connection creation failed";
+					uint32_t connNum = conn->GetNum();
+					messageHeaderIn.hdr.param32 = hspi.transfer32(connNum);
+					ListenOrConnectData lcData;
+					hspi.transferDwords(nullptr, reinterpret_cast<uint32_t*>(&lcData), NumDwords(sizeof(lcData)));
+
+					if (!conn->Connect(lcData.remoteIp, lcData.port))
+					{
+						lastError = "Connection creation failed";
+					}
+				}
+				else
+				{
+					// No available connection
+					SendResponse(ResponseBusy);
 				}
 			}
 			break;

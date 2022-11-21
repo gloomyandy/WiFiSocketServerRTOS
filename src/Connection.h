@@ -32,12 +32,14 @@ public:
 	size_t CanWrite() const;
 
 	void Close();
+	bool Connect(uint32_t remoteIp, uint16_t remotePort);
 	void Terminate(bool external);
 	void GetStatus(ConnStatusResponse& resp) const;
+	uint8_t GetNum() { return number; }
 
 	// Static functions
+	static Connection *Allocate();
 	static void Init();
-	static bool Connect(uint32_t remoteIp, uint16_t remotePort);
 	static bool Listen(uint16_t port, uint32_t ip, uint8_t protocol, uint16_t maxConns);
 	static void Dismiss(uint16_t port);
 	static void PollAll();
@@ -57,7 +59,6 @@ private:
 	void FreePbuf();
 	void Report();
 
-	static Connection *Allocate();
 	static uint16_t CountConnectionsOnPort(uint16_t port);
 
 	static void ConnectionTask(void* data);

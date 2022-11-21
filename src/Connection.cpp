@@ -224,6 +224,39 @@ void Connection::Close()
 	}
 }
 
+bool Connection::Connect(uint32_t remoteIp, uint16_t remotePort)
+{
+	struct netconn * tempPcb = netconn_new_with_callback(NETCONN_TCP, ConnectCallback);
+	if (tempPcb == nullptr)
+	{
+		debugPrintAlways("can't allocate connection\n");
+		return false;
+	}
+	netconn_set_nonblocking(tempPcb, 1);
+
+	conn = tempPcb;
+
+	// Since the member 'socket' is not used, use it to store
+	// reference to the owning Connection of the netconn.
+	static_assert(sizeof(conn->socket) == sizeof(this));
+	conn->socket = reinterpret_cast<int>(this);
+
+	ip_addr_t tempIp;
+	memset(&tempIp, 0, sizeof(tempIp));
+	tempIp.u_addr.ip4.addr = remoteIp;
+	err_t rc = netconn_connect(conn, &tempIp, remotePort);
+
+	if (!(rc == ERR_OK || rc == ERR_INPROGRESS))
+	{
+		Terminate(true);
+		debugPrintfAlways("can't connect: %d\n", (int)rc);
+		return false;
+	}
+
+	SetState(ConnState::connecting);
+	return true;
+}
+
 void Connection::Terminate(bool external)
 {
 	if (conn) {
@@ -307,48 +340,6 @@ void Connection::Report()
 	{
 		connectionList[i] = new Connection((uint8_t)i);
 	}
-}
-
-/* static */ bool Connection::Connect(uint32_t remoteIp, uint16_t remotePort)
-{
-	struct netconn * tempPcb = netconn_new_with_callback(NETCONN_TCP, ConnectCallback);
-	if (tempPcb == nullptr)
-	{
-		debugPrintAlways("can't allocate connection\n");
-		return false;
-	}
-	netconn_set_nonblocking(tempPcb, 1);
-
-	Connection * const conn = Connection::Allocate();
-
-	if (conn == nullptr)
-	{
-		netconn_close(tempPcb);
-		netconn_delete(tempPcb);
-		debugPrintAlways("can't allocate\n");
-		return false;
-	}
-	conn->conn = tempPcb;
-
-	// Since the member 'socket' is not used, use it to store
-	// reference to the owning Connection of the netconn.
-	static_assert(sizeof(tempPcb->socket) == sizeof(conn));
-	tempPcb->socket = reinterpret_cast<int>(conn);
-
-	ip_addr_t tempIp;
-	memset(&tempIp, 0, sizeof(tempIp));
-	tempIp.u_addr.ip4.addr = remoteIp;
-	err_t rc = netconn_connect(tempPcb, &tempIp, remotePort);
-
-	if (!(rc == ERR_OK || rc == ERR_INPROGRESS))
-	{
-		conn->Terminate(true);
-		debugPrintfAlways("can't connect: %d\n", (int)rc);
-		return false;
-	}
-
-	conn->SetState(ConnState::connecting);
-	return true;
 }
 
 bool Connection::Listen(uint16_t port, uint32_t ip, uint8_t protocol, uint16_t maxConns)
