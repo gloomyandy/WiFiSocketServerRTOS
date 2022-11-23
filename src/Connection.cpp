@@ -224,7 +224,7 @@ void Connection::Close()
 	}
 }
 
-bool Connection::Connect(uint32_t remoteIp, uint16_t remotePort)
+bool Connection::Connect(uint8_t protocol, uint32_t remoteIp, uint16_t remotePort)
 {
 	struct netconn * tempPcb = netconn_new_with_callback(NETCONN_TCP, ConnectCallback);
 	if (tempPcb == nullptr)
@@ -253,6 +253,7 @@ bool Connection::Connect(uint32_t remoteIp, uint16_t remotePort)
 		return false;
 	}
 
+	this->protocol = protocol;
 	SetState(ConnState::connecting);
 	return true;
 }
@@ -270,7 +271,13 @@ void Connection::Terminate(bool external)
 	SetState((external) ? ConnState::free : ConnState::aborted);
 }
 
-void Connection::SetConnection(struct netconn* conn, bool direction)
+void Connection::Accept(struct netconn* conn, uint8_t protocol)
+{
+	protocol = protocol;
+	Connected(conn);
+}
+
+void Connection::Connected(struct netconn* conn)
 {
 	this->conn = conn;
 	localPort = conn->pcb.tcp->local_port;
@@ -288,6 +295,7 @@ void Connection::SetConnection(struct netconn* conn, bool direction)
 void Connection::GetStatus(ConnStatusResponse& resp) const
 {
 	resp.socketNumber = number;
+	resp.protocol = protocol;
 	resp.state = state;
 	resp.bytesAvailable = CanRead();
 	resp.writeBufferSpace = CanWrite();
@@ -547,7 +555,7 @@ void Connection::Dismiss(uint16_t port)
 						if (c != nullptr)
 						{
 							netconn_set_nonblocking(newConn, 1);
-							c->SetConnection(newConn, Incoming);
+							c->Accept(newConn, p->GetProtocol());
 							if (p->GetProtocol() == protocolFtpData)
 							{
 								debugPrintf("accept conn, stop listen on port %u\n", port);
@@ -729,7 +737,7 @@ void Connection::Dismiss(uint16_t port)
 			{
 				if (evt == NETCONN_EVT_SENDPLUS)
 				{
-					c->SetConnection(conn, Outgoing);
+					c->Connected(conn);
 				}
 				else if (evt == NETCONN_EVT_ERROR)
 				{

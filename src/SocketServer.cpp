@@ -1466,7 +1466,7 @@ void ProcessRequest()
 					ListenOrConnectData lcData;
 					hspi.transferDwords(nullptr, reinterpret_cast<uint32_t*>(&lcData), NumDwords(sizeof(lcData)));
 
-					if (!conn->Connect(lcData.remoteIp, lcData.port))
+					if (!conn->Connect(lcData.protocol, lcData.remoteIp, lcData.port))
 					{
 						lastError = "Connection creation failed";
 					}

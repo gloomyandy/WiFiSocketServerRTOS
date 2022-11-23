@@ -294,7 +294,7 @@ struct ConnStatusResponse
 {
 	ConnState state;
 	uint8_t socketNumber;
-	uint8_t direction;
+	uint8_t protocol;
 	uint8_t dummy[1];
 	uint16_t localPort;
 	uint16_t remotePort;

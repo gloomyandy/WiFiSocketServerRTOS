@@ -32,7 +32,7 @@ public:
 	size_t CanWrite() const;
 
 	void Close();
-	bool Connect(uint32_t remoteIp, uint16_t remotePort);
+	bool Connect(uint8_t protocol, uint32_t remoteIp, uint16_t remotePort);
 	void Terminate(bool external);
 	void GetStatus(ConnStatusResponse& resp) const;
 	uint8_t GetNum() { return number; }
@@ -52,7 +52,8 @@ public:
 
 private:
 	void Poll();
-	void SetConnection(struct netconn *conn, bool direction);
+	void Accept(struct netconn *conn, uint8_t protocol);
+	void Connected(struct netconn *conn);
 	void SetState(ConnState st) { state = st; }
 	ConnState GetState() const { return state; }
 
@@ -66,6 +67,7 @@ private:
 	static void ConnectCallback(struct netconn *conn, enum netconn_evt evt, u16_t len);
 
 	uint8_t number;
+	uint8_t protocol;
 	uint16_t localPort;
 	uint16_t remotePort;
 	uint32_t remoteIp;
