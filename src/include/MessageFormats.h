@@ -128,7 +128,7 @@ struct ListenOrConnectData
 	uint32_t remoteIp;			// IP address to listen for, 0 means any
 	uint8_t protocol;			// Protocol for this connection (0 = HTTP, 1 = FTP, 2 = TELNET, 3 = FTP-DATA) - also see NetworkDefs.h
 	uint8_t dummy;				// To ensure alignment is the same on ESP8266 and SAM
-	uint16_t port;				// port number to listen on
+	uint16_t port;				// port number to listen on if connection is incoming, or to connect to if outgoing
 	uint16_t maxConnections;	// maximum number of connections to accept if listening
 };
 
@@ -280,7 +280,9 @@ enum class ConnState : uint8_t
 
 	// The remaining states are not of interest to clients
 	closePending,		// close this socket when sending is complete
-	closeReady			// other end has closed and we were already closePending
+	closeReady,			// other end has closed and we were already closePending
+
+	allocated
 };
 
 // Connection status response. This includes 32-bit fields, so it will be 32-bit aligned.
@@ -288,7 +290,8 @@ struct ConnStatusResponse
 {
 	ConnState state;
 	uint8_t socketNumber;
-	uint8_t dummy[2];
+	uint8_t protocol;
+	uint8_t dummy[1];
 	uint16_t localPort;
 	uint16_t remotePort;
 	uint32_t remoteIp;

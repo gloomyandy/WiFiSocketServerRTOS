@@ -13,6 +13,9 @@
 #include <cstdint>
 #include <cstddef>
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "lwip/api.h"
 
 #include "include/MessageFormats.h"			// for ConnState
@@ -23,55 +26,63 @@ public:
 	Connection(uint8_t num);
 
 	// Public interface
-	ConnState GetState() const { return state; }
-	void GetStatus(ConnStatusResponse& resp) const;
-
-	void Close();
-	void Terminate(bool external);
-	size_t Write(const uint8_t *data, size_t length, bool doPush, bool closeAfterSending);
-	size_t CanWrite() const;
 	size_t Read(uint8_t *data, size_t length);
 	size_t CanRead() const;
-	void Poll();
+	size_t Write(const uint8_t *data, size_t length, bool doPush, bool closeAfterSending);
+	size_t CanWrite() const;
 
-	// Callback functions
-	int Accept(struct netconn *pcb);
-	void ConnError(int err);
-	int ConnRecv(pbuf *p, int err);
-	int ConnSent(uint16_t len);
+	void Close();
+	bool Connect(uint8_t protocol, uint32_t remoteIp, uint16_t remotePort);
+	void Terminate(bool external);
+	void GetStatus(ConnStatusResponse& resp) const;
+	uint8_t GetNum() { return number; }
 
 	// Static functions
-	static void Init();
 	static Connection *Allocate();
-	static Connection& Get(uint8_t num) { return *connectionList[num]; }
-	static uint16_t CountConnectionsOnPort(uint16_t port);
-	static void ReportConnections();
-	static void GetSummarySocketStatus(uint16_t& connectedSockets, uint16_t& otherEndClosedSockets);
+	static void Init();
+	static bool Listen(uint16_t port, uint32_t ip, uint8_t protocol, uint16_t maxConns);
+	static void Dismiss(uint16_t port);
+	static void PollAll();
 	static void TerminateAll();
 
+	static Connection& Get(uint8_t num) { return *connectionList[num]; }
+	static uint16_t GetPortByProtocol(uint8_t protocol);
+	static void GetSummarySocketStatus(uint16_t& connectedSockets, uint16_t& otherEndClosedSockets);
+	static void ReportConnections();
+
 private:
+	void Poll();
+	void Accept(struct netconn *conn, uint8_t protocol);
+	void Connected(struct netconn *conn);
+	void SetState(ConnState st) { state = st; }
+	ConnState GetState() const { return state; }
+
 	void FreePbuf();
 	void Report();
 
-	void SetState(ConnState st)
-	{
-		state = st;
-	}
+	static uint16_t CountConnectionsOnPort(uint16_t port);
+
+	static void ConnectionTask(void* data);
+	static void ListenCallback(struct netconn *conn, enum netconn_evt evt, u16_t len);
+	static void ConnectCallback(struct netconn *conn, enum netconn_evt evt, u16_t len);
 
 	uint8_t number;
-	volatile ConnState state;
-
+	uint8_t protocol;
 	uint16_t localPort;
 	uint16_t remotePort;
-
 	uint32_t remoteIp;
+	struct netconn *conn;		// the pcb that corresponds to this connection
+	volatile ConnState state;
+
+	struct pbuf *readBuf;		// the buffers holding data we have received that has not yet been taken
 	size_t readIndex;			// how much data we have already read from the current pbuf
 	size_t alreadyRead;			// how much data we read from previous pbufs and didn't tell LWIP about yet
-	struct netconn *ownPcb;		// the pcb that corresponds to this connection
-	pbuf *pb;					// the buffers holding data we have received that has not yet been taken
 
-	static QueueHandle_t closeQueue;
-	static void connCloseTask(void* data);
+	static QueueHandle_t connectionQueue;
+	static SemaphoreHandle_t allocateMutex;
+
+	static volatile int closePendingCnt;
+	static struct netconn *closePending[MaxConnections];
 
 	static Connection *connectionList[MaxConnections];
 };
