@@ -27,6 +27,7 @@ void DNSServer::task(void* p)
               server->_udp = temp;
             } else {
               netconn_close(temp);
+              netconn_delete(temp);
               server->_udp = nullptr;
             }
           }
@@ -37,6 +38,7 @@ void DNSServer::task(void* p)
     } else {
       if (server->_udp) {
         netconn_close(server->_udp);
+        netconn_delete(server->_udp);
         server->_udp = nullptr;
         free(server->_buffer);
         server->_buffer = NULL;
