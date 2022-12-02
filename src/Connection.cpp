@@ -273,7 +273,7 @@ void Connection::Terminate(bool external)
 
 void Connection::Accept(struct netconn* conn, uint8_t protocol)
 {
-	protocol = protocol;
+	this->protocol = protocol;
 	Connected(conn);
 }
 
