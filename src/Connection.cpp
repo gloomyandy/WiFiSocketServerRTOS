@@ -241,6 +241,8 @@ bool Connection::Connect(uint8_t protocol, uint32_t remoteIp, uint16_t remotePor
 	static_assert(sizeof(conn->socket) == sizeof(this));
 	conn->socket = reinterpret_cast<int>(this);
 
+	ip_set_option(tempPcb->pcb.tcp, SOF_REUSEADDR);
+
 	ip_addr_t tempIp;
 	memset(&tempIp, 0, sizeof(tempIp));
 	tempIp.u_addr.ip4.addr = remoteIp;
@@ -390,6 +392,8 @@ bool Connection::Listen(uint16_t port, uint32_t ip, uint8_t protocol, uint16_t m
 	ip_addr_t tempIp;
 	memset(&tempIp, 0, sizeof(tempIp));
 	tempIp.u_addr.ip4.addr = ip;
+	ip_set_option(tempPcb->pcb.tcp, SOF_REUSEADDR); // seems to be needed for avoiding ERR_USE error when switching from client to AP
+
 	err_t rc = netconn_bind(tempPcb, &tempIp, port);
 	if (rc != ERR_OK)
 	{
