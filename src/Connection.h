@@ -41,7 +41,7 @@ public:
 	static Connection *Allocate();
 	static void Init();
 	static bool Listen(uint16_t port, uint32_t ip, uint8_t protocol, uint16_t maxConns);
-	static void Dismiss(uint16_t port);
+	static void StopListen(uint16_t port);
 	static void PollAll();
 	static void TerminateAll();
 

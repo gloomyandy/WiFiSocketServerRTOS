@@ -406,7 +406,7 @@ bool Connection::Listen(uint16_t port, uint32_t ip, uint8_t protocol, uint16_t m
 	return Listener::Start(port, ip, protocol, maxConns, tempPcb);
 }
 
-void Connection::Dismiss(uint16_t port)
+void Connection::StopListen(uint16_t port)
 {
 	for (Listener *p = Listener::List(); p != nullptr; )
 	{

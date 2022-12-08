@@ -1348,7 +1348,7 @@ void ProcessRequest()
 				messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
 				ListenOrConnectData lcData;
 				hspi.transferDwords(nullptr, reinterpret_cast<uint32_t*>(&lcData), NumDwords(sizeof(lcData)));
-				Connection::Dismiss(lcData.port);
+				Connection::StopListen(lcData.port);
 				RebuildServices();						// update the MDNS services
 				debugPrintf("Stopped listening on port %u\n", lcData.port);
 			}
@@ -1512,7 +1512,7 @@ void ProcessRequest()
 
 		case NetworkCommand::networkStop:					// disconnect from an access point, or close down our own access point
 			Connection::TerminateAll();						// terminate all connections
-			Connection::Dismiss(0);							// stop listening on all ports
+			Connection::StopListen(0);							// stop listening on all ports
 			RebuildServices();								// remove the MDNS services
 			switch (currentState)
 			{
