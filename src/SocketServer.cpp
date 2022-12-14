@@ -70,6 +70,9 @@ static const int DefaultWiFiChannel = 6;
 
 static const int MaxAPConnections = 4;
 
+static uint32_t numWifiReconnects = 0;
+static bool usingDhcpc = false;
+
 // Global data
 
 static volatile int currentSsid = -1;
@@ -174,6 +177,12 @@ static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 			default:
 				wifiEvt = STATION_CONNECT_FAIL;
 				break;
+		}
+		if (disconnected->reason != WIFI_REASON_ASSOC_LEAVE)
+		{
+			// The disconnection was not triggered by an explicit disconnection command
+			// by RRF, and will cause reconnection attempts. Count them here.
+			numWifiReconnects++;
 		}
 	} else if (event_base == WIFI_EVENT && (event_id == WIFI_EVENT_STA_STOP || event_id == WIFI_EVENT_AP_STOP)) {
 		wifiEvt = WIFI_IDLE;
@@ -309,6 +318,10 @@ void ConnectPoll(void* data)
 
 					debugPrint("Connected to AP\n");
 					currentState = WiFiState::connected;
+					break;
+
+				case STATION_CONNECTING:
+					// Do nothing
 					break;
 
 				default:
@@ -583,7 +596,8 @@ pre(currentState == WiFiState::idle)
 
 	// On Arduino core, gateway and subnet is ignored
 	// if IP address is not specified.
-	if (wp.ip) {
+	if (wp.ip)
+	{
 		tcpip_adapter_ip_info_t ip_info;
 		ip_info.ip.addr = wp.ip;
 		ip_info.gw.addr = wp.gateway;
@@ -594,7 +608,10 @@ pre(currentState == WiFiState::idle)
 			ip_info.netmask.addr = wp.netmask;
 		}
 		tcpip_adapter_set_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info);
-	} else {
+	}
+	else
+	{
+		usingDhcpc = true;
 		tcpip_adapter_dhcpc_start(TCPIP_ADAPTER_IF_STA);
 	}
 
@@ -698,6 +715,7 @@ void StartAccessPoint()
 
 				if (res == ESP_OK) {
 					debugPrintf("Starting AP %s with password \"%s\"\n", apData.ssid, apData.password);
+					currentSsid = WirelessConfigurationMgr::AP;
 					res = esp_wifi_start();
 				}
 
@@ -765,6 +783,57 @@ void SendResponse(int32_t response)
 	{
 		hspi.transferDwords(transferBuffer, nullptr, NumDwords((size_t)response));
 	}
+}
+
+WiFiAuth EspAuthModeToWiFiAuth(wifi_auth_mode_t authmode)
+{
+	WiFiAuth res = WiFiAuth::UNKNOWN;
+
+	switch (authmode)
+	{
+	case WIFI_AUTH_OPEN:
+		res = WiFiAuth::OPEN;
+		break;
+
+	case WIFI_AUTH_WEP:
+		res = WiFiAuth::WEP;
+		break;
+
+	case WIFI_AUTH_WPA_PSK:
+		res = WiFiAuth::WPA_PSK;
+		break;
+
+	case WIFI_AUTH_WPA2_PSK:
+		res = WiFiAuth::WPA2_PSK;
+		break;
+
+	case WIFI_AUTH_WPA_WPA2_PSK:
+		res = WiFiAuth::WPA_WPA2_PSK;
+		break;
+
+	case WIFI_AUTH_WPA2_ENTERPRISE:
+		res = WiFiAuth::WPA2_ENTERPRISE;
+		break;
+
+	case WIFI_AUTH_WPA3_PSK:
+		res = WiFiAuth::WPA3_PSK;
+		break;
+
+	case WIFI_AUTH_WPA2_WPA3_PSK:
+		res = WiFiAuth::WPA2_WPA3_PSK;
+		break;
+
+#ifndef ESP8266
+	case WIFI_AUTH_WAPI_PSK:
+		res = WiFiAuth::WAPI_PSK;
+		break;
+#endif
+
+	default:
+		break;
+	}
+
+	return res;
 }
 
 // This is called when the SAM is asking to transfer data
@@ -843,10 +912,11 @@ void ProcessRequest()
 
 		case NetworkCommand::networkGetStatus:				// get the network connection status
 			{
-				const bool runningAsAp = (currentState == WiFiState::runningAsAccessPoint);
-				const bool runningAsStation = (currentState == WiFiState::connected);
 				NetworkStatusResponse * const response = reinterpret_cast<NetworkStatusResponse*>(transferBuffer);
-				response->freeHeap = esp_get_free_heap_size();
+				memset(response, 0, sizeof(*response));
+
+				response->flashSize = spi_flash_get_chip_size();
+				SafeStrncpy(response->versionText, firmwareVersion, sizeof(response->versionText));
 
 				switch (esp_reset_reason())
 				{
@@ -887,32 +957,13 @@ void ProcessRequest()
 					break;
 				}
 
-				if (runningAsStation) {
-					wifi_ap_record_t ap_info;
-					esp_wifi_sta_get_ap_info(&ap_info);
-					memset(&ap_info, 0, sizeof(ap_info));
-					response->rssi = ap_info.rssi;
-					response->numClients = 0;
-					esp_wifi_get_mac(WIFI_IF_STA, response->macAddress);
-					tcpip_adapter_ip_info_t ip_info;
-					tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info);
-					response->ipAddress = ip_info.ip.addr;
-				} else if (runningAsAp) {
-					wifi_sta_list_t sta_list;
-					memset(&sta_list, 0, sizeof(sta_list));
-					esp_wifi_ap_get_sta_list(&sta_list);
+				SafeStrncpy(response->hostName, webHostName, sizeof(response->hostName));
 
-					response->numClients = sta_list.num;
-					response->rssi = 0;
-					esp_wifi_get_mac(WIFI_IF_AP, response->macAddress);
-					tcpip_adapter_ip_info_t ip_info;
-					tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_AP, &ip_info);
-					response->ipAddress = ip_info.ip.addr;
-				} else {
-					response->ipAddress = 0;
-				}
-
-				response->flashSize = spi_flash_get_chip_size();
+#ifdef ESP8266
+				response->clockReg = REG(SPI_CLOCK(MSPI));
+#else
+				response->clockReg = SPI_LL_GET_HW(MSPI)->clock.val;
+#endif
 
 				wifi_ps_type_t ps = WIFI_PS_NONE;
 				esp_wifi_get_ps(&ps);
@@ -930,34 +981,89 @@ void ProcessRequest()
 					break;
 				}
 
-				uint8_t EspWiFiPhyMode = 0;
-				esp_wifi_get_protocol(WIFI_IF_STA, &EspWiFiPhyMode);
+				const bool runningAsAp = (currentState == WiFiState::runningAsAccessPoint);
+				const bool runningAsStation = (currentState == WiFiState::connected);
 
-				if (EspWiFiPhyMode | WIFI_PROTOCOL_11N) {
-					response->phyMode = static_cast<int>(EspWiFiPhyMode::N);
-				} else if (EspWiFiPhyMode | WIFI_PROTOCOL_11G) {
-					response->phyMode = static_cast<int>(EspWiFiPhyMode::G);
-				} else if (EspWiFiPhyMode | WIFI_PROTOCOL_11B) {
-					response->phyMode = static_cast<int>(EspWiFiPhyMode::B);
+				response->rssi = INT8_MIN;
+				response->numReconnects = numWifiReconnects;
+				response->usingDhcpc = usingDhcpc;
+
+				if (runningAsAp || runningAsStation)
+				{
+					esp_wifi_get_mac(runningAsStation ? WIFI_IF_STA : WIFI_IF_AP, response->macAddress);
+
+					if (runningAsStation)
+					{
+						wifi_ap_record_t ap_info;
+						memset(&ap_info, 0, sizeof(ap_info));
+						esp_wifi_sta_get_ap_info(&ap_info);
+						response->rssi = ap_info.rssi;
+						response->auth = EspAuthModeToWiFiAuth(ap_info.authmode);
+						SafeStrncpy(response->ssid, (const char*)ap_info.ssid, sizeof(response->ssid));
+					}
+					else
+					{
+						wifi_sta_list_t sta_list;
+						memset(&sta_list, 0, sizeof(sta_list));
+						esp_wifi_ap_get_sta_list(&sta_list);
+						response->numClients = sta_list.num;
+
+						wifi_config_t ap_cfg;
+						esp_wifi_get_config(WIFI_IF_AP, &ap_cfg);
+						response->auth = EspAuthModeToWiFiAuth(ap_cfg.ap.authmode);
+						SafeStrncpy(response->ssid, (const char*)ap_cfg.ap.ssid, sizeof(response->ssid));
+					}
+
+					tcpip_adapter_ip_info_t ip_info;
+					tcpip_adapter_get_ip_info(runningAsStation ? TCPIP_ADAPTER_IF_STA : TCPIP_ADAPTER_IF_AP, &ip_info);
+					response->ipAddress = ip_info.ip.addr;
+					response->netmask = ip_info.netmask.addr;
+					response->gateway = ip_info.gw.addr;
+
+					uint8_t pChan;
+					wifi_second_chan_t sChan;
+					esp_wifi_get_channel(&pChan, &sChan);
+					response->channel = pChan;
+
+					switch (sChan)
+					{
+					case WIFI_SECOND_CHAN_NONE:
+						response->ht = static_cast<uint8_t>(HTMode::HT20);
+						break;
+
+					case WIFI_SECOND_CHAN_ABOVE:
+						response->ht = static_cast<uint8_t>(HTMode::HT40_ABOVE);
+						break;
+
+					case WIFI_SECOND_CHAN_BELOW:
+						response->ht = static_cast<uint8_t>(HTMode::HT40_BELOW);
+						break;
+
+					default:
+						break;
+					}
+
+					uint8_t EspWiFiPhyMode = 0;
+					esp_wifi_get_protocol(runningAsStation ? WIFI_IF_STA : WIFI_IF_AP, &EspWiFiPhyMode);
+
+					if (EspWiFiPhyMode | WIFI_PROTOCOL_11N) {
+						response->phyMode = static_cast<int>(EspWiFiPhyMode::N);
+					} else if (EspWiFiPhyMode | WIFI_PROTOCOL_11G) {
+						response->phyMode = static_cast<int>(EspWiFiPhyMode::G);
+					} else if (EspWiFiPhyMode | WIFI_PROTOCOL_11B) {
+						response->phyMode = static_cast<int>(EspWiFiPhyMode::B);
+					}
+
 				}
 
-				response->zero1 = 0;
-				response->zero2 = 0;
+				response->freeHeap = esp_get_free_heap_size();
+
 #ifdef ESP8266
 				response->vcc = esp_wifi_get_vdd33();
 #else
 				response->vcc = 0;
 #endif
-				WirelessConfigurationData wp;
-				wirelessConfigMgr->GetSsid(currentSsid, wp);
-				SafeStrncpy(response->versionText, firmwareVersion, sizeof(response->versionText));
-				SafeStrncpy(response->hostName, webHostName, sizeof(response->hostName));
-				SafeStrncpy(response->ssid, wp.ssid, sizeof(response->ssid));
-#ifdef ESP8266
-				response->clockReg = REG(SPI_CLOCK(MSPI));
-#else
-				response->clockReg = SPI_LL_GET_HW(MSPI)->clock.val;
-#endif
+
 				SendResponse(sizeof(NetworkStatusResponse));
 			}
 			break;
@@ -1251,50 +1357,7 @@ void ProcessRequest()
 							d.phymode = EspWiFiPhyMode::B;
 						}
 
-						switch (ap.authmode)
-						{
-						case WIFI_AUTH_OPEN:
-							d.auth = WiFiAuth::OPEN;
-							break;
-
-						case WIFI_AUTH_WEP:
-							d.auth = WiFiAuth::WEP;
-							break;
-
-						case WIFI_AUTH_WPA_PSK:
-							d.auth = WiFiAuth::WPA_PSK;
-							break;
-
-						case WIFI_AUTH_WPA2_PSK:
-							d.auth = WiFiAuth::WPA2_PSK;
-							break;
-
-						case WIFI_AUTH_WPA_WPA2_PSK:
-							d.auth = WiFiAuth::WPA_WPA2_PSK;
-							break;
-
-						case WIFI_AUTH_WPA2_ENTERPRISE:
-							d.auth = WiFiAuth::WPA2_ENTERPRISE;
-							break;
-
-						case WIFI_AUTH_WPA3_PSK:
-							d.auth = WiFiAuth::WPA3_PSK;
-							break;
-
-						case WIFI_AUTH_WPA2_WPA3_PSK:
-							d.auth = WiFiAuth::WPA2_WPA3_PSK;
-							break;
-
-#ifndef ESP8266
-						case WIFI_AUTH_WAPI_PSK:
-							d.auth = WiFiAuth::WAPI_PSK;
-							break;
-#endif
-
-						default:
-							d.auth = WiFiAuth::UNKNOWN;
-							break;
-						}
+						d.auth = EspAuthModeToWiFiAuth(ap.authmode);
 					}
 
 				}
@@ -1533,7 +1596,15 @@ void ProcessRequest()
 			default:
 				break;
 			}
-			delay(100);
+
+			while (currentState != WiFiState::idle)
+			{
+				delay(100);
+			}
+
+			usingDhcpc = false;
+			numWifiReconnects = 0;
+			currentSsid = -1;
 			break;
 
 		case NetworkCommand::networkStartScan:
