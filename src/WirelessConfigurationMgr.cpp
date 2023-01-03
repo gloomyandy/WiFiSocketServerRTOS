@@ -11,6 +11,7 @@
 #include "Misc.h"
 
 #ifdef ESP8266
+#include "esp8266/rom_functions.h"
 #include "esp8266/partition.h"
 #endif
 
@@ -65,26 +66,31 @@ void WirelessConfigurationMgr::Init()
 		debugPrint("initializing SSID storage...\n");
 		Reset();
 
-		// Restore SSID info from old, 1.x firmware, if the partition exists
-		const esp_partition_t* oldSsids = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
-			ESP_PARTITION_SUBTYPE_DATA_NVS, "ssids_old");
+#if ESP8266
+		uint32_t offset = 0x3FB000;
 
-		if (oldSsids) {
-			int oldSsidCnt = 0;
-
-			for (int ssid = MaxRememberedNetworks; ssid >= 0; ssid--) {
-				WirelessConfigurationData temp;
-				esp_partition_read(oldSsids, ssid * sizeof(temp), &temp, sizeof(temp));
-
-				if (temp.ssid[0] != 0xFF) {
-					SetSsidData(ssid, temp);
-					oldSsidCnt++;
-				}
-			}
-
-			debugPrintf("restored %d old SSIDs...\n", oldSsidCnt);
+		extern esp_rom_spiflash_chip_t g_rom_flashchip;
+		if (g_rom_flashchip.chip_size == 0x200000)
+		{
+			offset = 0x1FB000;
 		}
-		debugPrint("done!\n");
+
+		int oldSsidCnt = 0;
+
+		for (int ssid = MaxRememberedNetworks; ssid >= 0; ssid--)
+		{
+			WirelessConfigurationData temp;
+			spi_flash_read(offset + (ssid * sizeof(temp)), &temp, sizeof(temp));
+
+			if (temp.ssid[0] != 0xFF)
+			{
+				SetSsidData(ssid, temp);
+				oldSsidCnt++;
+			}
+		}
+
+		debugPrintf("restored %d old SSIDs...\n", oldSsidCnt);
+#endif
 	}
 
 #ifndef ESP8266
