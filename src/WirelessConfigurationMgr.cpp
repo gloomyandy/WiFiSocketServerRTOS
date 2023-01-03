@@ -62,7 +62,7 @@ void WirelessConfigurationMgr::Init()
 	// since WirelessConfigurationMgr::Reset works it's way backwards to it.
 	if (!GetKV(GetSsidKey(key, 0), nullptr, 0))
 	{
-		debugPrint("initializing SSID storage...");
+		debugPrint("initializing SSID storage...\n");
 		Reset();
 
 		// Restore SSID info from old, 1.x firmware, if the partition exists
@@ -70,7 +70,7 @@ void WirelessConfigurationMgr::Init()
 			ESP_PARTITION_SUBTYPE_DATA_NVS, "ssids_old");
 
 		if (oldSsids) {
-			debugPrint("restoring old SSID...");
+			int oldSsidCnt = 0;
 
 			for (int ssid = MaxRememberedNetworks; ssid >= 0; ssid--) {
 				WirelessConfigurationData temp;
@@ -78,8 +78,11 @@ void WirelessConfigurationMgr::Init()
 
 				if (temp.ssid[0] != 0xFF) {
 					SetSsidData(ssid, temp);
+					oldSsidCnt++;
 				}
 			}
+
+			debugPrintf("restored %d old SSIDs...\n", oldSsidCnt);
 		}
 		debugPrint("done!\n");
 	}

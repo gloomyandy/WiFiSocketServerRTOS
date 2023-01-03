@@ -1675,10 +1675,10 @@ void setup()
 	mainTaskHdl = xTaskGetCurrentTaskHandle();
 
 	// Setup Wi-Fi
-	#pragma GCC diagnostic push
-	#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 	tcpip_adapter_init();
-	#pragma GCC diagnostic pop
+#pragma GCC diagnostic pop
 
 	esp_event_loop_create_default();
 
