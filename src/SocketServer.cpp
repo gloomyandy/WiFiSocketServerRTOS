@@ -74,8 +74,13 @@ static uint32_t numWifiReconnects = 0;
 static bool usingDhcpc = false;
 
 // Global data
-
 static volatile int currentSsid = -1;
+
+#if ESP8266
+static_assert(HostNameLength <= CONFIG_TCPIP_ADAPTER_HOSTNAME_MAX_LENGTH);
+#else
+static_assert(HostNameLength <= CONFIG_ESP_NETIF_HOSTNAME_MAX_LENGTH);
+#endif
 static char webHostName[HostNameLength + 1] = "Duet-WiFi";
 
 static DNSServer dns;
