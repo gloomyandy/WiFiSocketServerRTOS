@@ -74,6 +74,7 @@ static uint32_t numWifiReconnects = 0;
 static bool usingDhcpc = false;
 
 // Global data
+static tcpip_adapter_ip_info_t staIpInfo;
 static volatile int currentSsid = -1;
 
 #if ESP8266
@@ -159,6 +160,11 @@ static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 		wifiEvt = STATION_CONNECTING;
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED) {
 		tcpip_adapter_set_hostname(TCPIP_ADAPTER_IF_STA, webHostName);
+		if (!usingDhcpc)
+		{
+			tcpip_adapter_dhcpc_stop(TCPIP_ADAPTER_IF_STA);
+			tcpip_adapter_set_ip_info(TCPIP_ADAPTER_IF_STA, &staIpInfo);
+		}
 		return;
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
 		wifi_event_sta_disconnected_t* disconnected = (wifi_event_sta_disconnected_t*) event_data;
@@ -597,22 +603,21 @@ pre(currentState == WiFiState::idle)
 		esp_wifi_sta_wpa2_ent_enable();
 	}
 
-	tcpip_adapter_dhcpc_stop(TCPIP_ADAPTER_IF_STA);
+	memset(&staIpInfo, 0, sizeof(staIpInfo));
 
 	// On Arduino core, gateway and subnet is ignored
 	// if IP address is not specified.
 	if (wp.ip)
 	{
-		tcpip_adapter_ip_info_t ip_info;
-		ip_info.ip.addr = wp.ip;
-		ip_info.gw.addr = wp.gateway;
+		usingDhcpc = false;
+		staIpInfo.ip.addr = wp.ip;
+		staIpInfo.gw.addr = wp.gateway;
 
 		if(!wp.netmask) {
-			IP4_ADDR(&ip_info.netmask, 255,255,255,0); // default to 255.255.255.0
+			IP4_ADDR(&staIpInfo.netmask, 255, 255, 255, 0); // default to 255.255.255.0
 		} else {
-			ip_info.netmask.addr = wp.netmask;
+			staIpInfo.netmask.addr = wp.netmask;
 		}
-		tcpip_adapter_set_ip_info(TCPIP_ADAPTER_IF_STA, &ip_info);
 	}
 	else
 	{
@@ -713,7 +718,7 @@ void StartAccessPoint()
 				tcpip_adapter_ip_info_t ip_info;
 				ip_info.ip.addr = apData.ip;
 				ip_info.gw.addr = apData.ip;
-				IP4_ADDR(&ip_info.netmask, 255,255,255,0);
+				IP4_ADDR(&ip_info.netmask, 255, 255, 255, 0);
 				res = tcpip_adapter_set_ip_info(TCPIP_ADAPTER_IF_AP, &ip_info);
 
 				tcpip_adapter_dhcps_start(TCPIP_ADAPTER_IF_AP);
