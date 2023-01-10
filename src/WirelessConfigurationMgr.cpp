@@ -11,10 +11,27 @@
 #include "Misc.h"
 
 #ifdef ESP8266
+#include "esp8266/rom_functions.h"
 #include "esp8266/partition.h"
+
+extern esp_rom_spiflash_chip_t g_rom_flashchip;
 #endif
 
 WirelessConfigurationMgr* WirelessConfigurationMgr::instance = nullptr;
+
+#if ESP8266
+static uint32_t getOldSSIDStorageOffset()
+{
+	uint32_t offset = 0x3FB000;
+
+	if (g_rom_flashchip.chip_size == 0x200000)
+	{
+		offset = 0x1FB000;
+	}
+
+	return offset;
+}
+#endif
 
 static inline uint32_t round2SecSz(uint32_t val)
 {
@@ -62,26 +79,28 @@ void WirelessConfigurationMgr::Init()
 	// since WirelessConfigurationMgr::Reset works it's way backwards to it.
 	if (!GetKV(GetSsidKey(key, 0), nullptr, 0))
 	{
-		debugPrint("initializing SSID storage...");
+		debugPrint("initializing SSID storage...\n");
 		Reset();
 
-		// Restore SSID info from old, 1.x firmware, if the partition exists
-		const esp_partition_t* oldSsids = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
-			ESP_PARTITION_SUBTYPE_DATA_NVS, "ssids_old");
+#if ESP8266
+		uint32_t offset = getOldSSIDStorageOffset();
 
-		if (oldSsids) {
-			debugPrint("restoring old SSID...");
+		int oldSsidCnt = 0;
 
-			for (int ssid = MaxRememberedNetworks; ssid >= 0; ssid--) {
-				WirelessConfigurationData temp;
-				esp_partition_read(oldSsids, ssid * sizeof(temp), &temp, sizeof(temp));
+		for (int ssid = MaxRememberedNetworks; ssid >= 0; ssid--)
+		{
+			WirelessConfigurationData temp;
+			spi_flash_read(offset + (ssid * sizeof(temp)), &temp, sizeof(temp));
 
-				if (temp.ssid[0] != 0xFF) {
-					SetSsidData(ssid, temp);
-				}
+			if (temp.ssid[0] != 0xFF)
+			{
+				SetSsidData(ssid, temp);
+				oldSsidCnt++;
 			}
 		}
-		debugPrint("done!\n");
+
+		debugPrintf("restored %d old SSIDs...\n", oldSsidCnt);
+#endif
 	}
 
 #ifndef ESP8266
@@ -108,6 +127,16 @@ void WirelessConfigurationMgr::Reset(bool format)
 	if (format)
 	{
 		esp_spiffs_format(NULL);
+
+#if ESP8266
+		// This was the previous firmware calculation for the size of the SSID EEPROM region.
+		// Since we're hardcoding the erase size (one sector), make sure
+		// that the previous storage region falls within this erasure.
+		const size_t eepromSizeNeeded = (MaxRememberedNetworks + 1) * sizeof(WirelessConfigurationData);
+		const size_t eraseSize = SPI_FLASH_SEC_SIZE;
+		static_assert(eepromSizeNeeded <= eraseSize);
+		spi_flash_erase_range(getOldSSIDStorageOffset(), eraseSize);
+#endif
 	}
 
 	// Reset storage and reset values to default.

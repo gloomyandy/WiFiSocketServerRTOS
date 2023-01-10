@@ -562,7 +562,7 @@ void Connection::StopListen(uint16_t port)
 							c->Accept(newConn, p->GetProtocol());
 							if (p->GetProtocol() == protocolFtpData)
 							{
-								debugPrintf("accept conn, stop listen on port %u\n", port);
+								debugPrintf("accept conn, stop listen on port %u\n", p->GetPort());
 								p->Stop();	// don't listen for further connections
 							}
 						}
