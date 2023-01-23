@@ -550,6 +550,10 @@ pre(currentState == WiFiState::idle)
 	esp_wifi_sta_wpa2_ent_clear_username();
 	esp_wifi_sta_wpa2_ent_clear_password();
 
+#ifndef ESP8266
+	esp_wifi_sta_wpa2_ent_clear_new_password();
+#endif
+
 	if (wp.eap.protocol != EAPProtocol::NONE)
 	{
 		CredentialsInfo offsets;
@@ -589,16 +593,15 @@ pre(currentState == WiFiState::idle)
 		{
 			esp_wifi_sta_wpa2_ent_set_username(base + offsets.asMemb.peapttls.identity, sizes.asMemb.peapttls.identity);
 			esp_wifi_sta_wpa2_ent_set_password(base + offsets.asMemb.peapttls.password, sizes.asMemb.peapttls.password);
+#ifndef ESP8266
+			esp_wifi_sta_wpa2_ent_set_ttls_phase2_method(ESP_EAP_TTLS_PHASE2_MSCHAPV2);
+#endif
 		}
 		else
 		{
 			lastError = "Invalid 802.1x protocol";
 			return;
 		}
-
-#ifndef ESP8266
-		esp_wifi_sta_wpa2_ent_set_ttls_phase2_method(ESP_EAP_TTLS_PHASE2_MSCHAPV2);
-#endif
 
 		esp_wifi_sta_wpa2_ent_enable();
 	}
