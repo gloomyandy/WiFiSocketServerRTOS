@@ -91,8 +91,9 @@ const uint8_t Backlog = 8;
 
 #define MAIN_PRIO								(ESP_TASK_TCPIP_PRIO + 1)
 #define CONN_POLL_PRIO							(ESP_TASKD_EVENT_PRIO - 1)
-#define CONNECTION_PRIO							(ESP_TASK_TCPIP_PRIO)
+#define CONNECTION_PRIO							(MAIN_PRIO + 1)
 #define DNS_SERVER_PRIO							(ESP_TASK_MAIN_PRIO)
+
 
 #ifdef ESP8266
 #define CONN_POLL_STACK							(1492)

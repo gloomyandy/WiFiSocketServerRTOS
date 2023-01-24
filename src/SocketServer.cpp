@@ -59,6 +59,9 @@ extern "C"
 
 #include "esp_wpa2.h"
 
+
+static_assert(CONN_POLL_PRIO == MAIN_PRIO);
+
 static const uint32_t MaxConnectTime = 40 * 1000;			// how long we wait for WiFi to connect in milliseconds
 static const uint32_t TransferReadyTimeout = 10;			// how many milliseconds we allow for the Duet to set
 													// TransferReady low after the end of a transaction,
