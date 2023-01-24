@@ -14,6 +14,7 @@
 #include "Misc.h"				// for millis
 #include "Config.h"
 
+
 typedef enum
 {
 	Accept,
@@ -205,22 +206,13 @@ void Connection::Close()
 		FreePbuf();
 	}
 
-	// Gracefully close the connection. The connection is passed to ConnectionTask which waits until
-	// all data has been transmitted (or a set timeout), before finally closing the connection.
-	if (closePendingCnt < MaxConnections)
+	ConnectionEvent evt;
+	evt.type = ConnectionEventType::Close;
+	evt.data.ptr = conn;
+	if (xQueueSend(connectionQueue, &evt, 0) == pdTRUE)
 	{
-		ConnectionEvent evt;
-		evt.type = ConnectionEventType::Close;
-		evt.data.ptr = conn;
-		if (xQueueSend(connectionQueue, &evt, 0) == pdTRUE)
-		{
-			// Increase in this task, rather than on ConnectionTask, due to the
-			// higher priority (if a new close is requested, and the previous
-			// connections haven't been serviced yet).
-			closePendingCnt++;
-			SetState(ConnState::free);
-			conn = nullptr;
-		}
+		SetState(ConnState::free);
+		conn = nullptr;
 	}
 }
 
@@ -342,7 +334,7 @@ void Connection::Report()
 
 /*static*/ void Connection::Init()
 {
-	connectionQueue = xQueueCreate(MaxConnections * 2, sizeof(ConnectionEvent));
+	connectionQueue = xQueueCreate(MaxConnections, sizeof(ConnectionEvent));
 	allocateMutex = xSemaphoreCreateMutex();
 	xTaskCreate(ConnectionTask, "conn", CONNECTION_TASK, NULL, CONNECTION_PRIO, NULL);
 
@@ -481,11 +473,11 @@ void Connection::StopListen(uint16_t port)
 	Connection *conn = nullptr;
 
 	// This sequence must be protected with a mutex, since it happens on
-	// both ConnectionTask and the main task, the former having lower
-	// priority. If for example, this is executing on ConnectionTask
+	// both ConnectionTask and the main task, the latter having lower
+	// priority. If for example, this is executing on main task
 	// specifically after the state == free check, at which point is
-	// pre-empted by the main task executing the same code, the allocated
-	// Connection has now been spent.
+	// pre-empted by the ConnectionTask executing the same code, the allocated
+	// Connection will have been already spent.
 	xSemaphoreTake(allocateMutex, portMAX_DELAY);
 	for (size_t i = 0; i < MaxConnections; ++i)
 	{
@@ -636,11 +628,6 @@ void Connection::StopListen(uint16_t port)
 						netconn_close(conn);
 						netconn_delete(conn);
 						closePending[idx] = nullptr;
-
-						// This task can be pre-empted by Connection::Close in the main task,
-						// so decrease the pending count last. This way the main task should not
-						// exceed the max number of close pending connections.
-						closePendingCnt--;
 					}
 				}
 			}
@@ -679,7 +666,6 @@ void Connection::StopListen(uint16_t port)
 						netconn_close(closePending[i]);
 						netconn_delete(closePending[i]);
 						closePending[i] = nullptr;
-						closePendingCnt--;
 					}
 					else
 					{
@@ -756,7 +742,6 @@ void Connection::StopListen(uint16_t port)
 // Static data
 QueueHandle_t Connection::connectionQueue = nullptr;
 SemaphoreHandle_t Connection::allocateMutex = nullptr;
-volatile int Connection::closePendingCnt = 0;
 netconn * Connection::closePending[MaxConnections];
 Connection *Connection::connectionList[MaxConnections];
 

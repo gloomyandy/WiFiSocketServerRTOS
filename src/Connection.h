@@ -81,7 +81,6 @@ private:
 	static QueueHandle_t connectionQueue;
 	static SemaphoreHandle_t allocateMutex;
 
-	static volatile int closePendingCnt;
 	static struct netconn *closePending[MaxConnections];
 
 	static Connection *connectionList[MaxConnections];

@@ -59,6 +59,9 @@ extern "C"
 
 #include "esp_wpa2.h"
 
+
+static_assert(CONN_POLL_PRIO == MAIN_PRIO);
+
 static const uint32_t MaxConnectTime = 40 * 1000;			// how long we wait for WiFi to connect in milliseconds
 static const uint32_t TransferReadyTimeout = 10;			// how many milliseconds we allow for the Duet to set
 													// TransferReady low after the end of a transaction,
@@ -550,6 +553,10 @@ pre(currentState == WiFiState::idle)
 	esp_wifi_sta_wpa2_ent_clear_username();
 	esp_wifi_sta_wpa2_ent_clear_password();
 
+#ifndef ESP8266
+	esp_wifi_sta_wpa2_ent_clear_new_password();
+#endif
+
 	if (wp.eap.protocol != EAPProtocol::NONE)
 	{
 		CredentialsInfo offsets;
@@ -589,16 +596,15 @@ pre(currentState == WiFiState::idle)
 		{
 			esp_wifi_sta_wpa2_ent_set_username(base + offsets.asMemb.peapttls.identity, sizes.asMemb.peapttls.identity);
 			esp_wifi_sta_wpa2_ent_set_password(base + offsets.asMemb.peapttls.password, sizes.asMemb.peapttls.password);
+#ifndef ESP8266
+			esp_wifi_sta_wpa2_ent_set_ttls_phase2_method(ESP_EAP_TTLS_PHASE2_MSCHAPV2);
+#endif
 		}
 		else
 		{
 			lastError = "Invalid 802.1x protocol";
 			return;
 		}
-
-#ifndef ESP8266
-		esp_wifi_sta_wpa2_ent_set_ttls_phase2_method(ESP_EAP_TTLS_PHASE2_MSCHAPV2);
-#endif
 
 		esp_wifi_sta_wpa2_ent_enable();
 	}
@@ -1116,9 +1122,7 @@ void ProcessRequest()
 
 							if (protocol == EAPProtocol::EAP_TTLS_MSCHAPV2
 								|| protocol == EAPProtocol::EAP_PEAP_MSCHAPV2
-#ifndef ESP8266
 								|| protocol == EAPProtocol::EAP_TLS
-#endif
 								)
 							{
 								hspi.transferDwords(nullptr, transferBuffer, NumDwords(sizeof(WirelessConfigurationData)));
