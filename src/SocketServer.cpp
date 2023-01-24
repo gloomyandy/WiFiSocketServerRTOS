@@ -1122,9 +1122,7 @@ void ProcessRequest()
 
 							if (protocol == EAPProtocol::EAP_TTLS_MSCHAPV2
 								|| protocol == EAPProtocol::EAP_PEAP_MSCHAPV2
-#ifndef ESP8266
 								|| protocol == EAPProtocol::EAP_TLS
-#endif
 								)
 							{
 								hspi.transferDwords(nullptr, transferBuffer, NumDwords(sizeof(WirelessConfigurationData)));
