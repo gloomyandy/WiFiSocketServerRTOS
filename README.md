@@ -12,10 +12,10 @@ Building the project generates `DuetWiFiServer.bin` used for [`M997 S1`](https:/
 
 1. Install the pre-requisites for your platform: [Linux](https://docs.espressif.com/projects/esp8266-rtos-sdk/en/latest/get-started/linux-setup.html#install-prerequisites), [macOS](https://docs.espressif.com/projects/esp8266-rtos-sdk/en/latest/get-started/macos-setup.html#install-prerequisites). Note that you might need additional/different packages depending on your system. For example, on systems  which transitioned to Python 3, you might need `python3-pip python-is-python3 python3-serial` (or the equivalent for your package manager) instead.
 
-2. Clone [ESP8266 RTOS SDK `release/v3.4`](https://github.com/espressif/ESP8266_RTOS_SDK). Make sure the path to the SDK has no spaces.
+2. Clone [ESP8266 RTOS SDK `dwss_support` branch](https://github.com/Duet3D/ESP8266_RTOS_SDK). Make sure the path to the SDK has no spaces.
 
 ```console
-user@pc:/path/to$ git clone --branch release/v3.4 --recursive https://github.com/espressif/ESP8266_RTOS_SDK.git
+user@pc:/path/to$ git clone --branch dwss_support --recursive https://github.com/Duet3D/ESP8266_RTOS_SDK.git
 ```
 
 3. Navigate to the ESP8266 RTOS SDK directory and execute the install script.
@@ -42,11 +42,11 @@ user@pc:/path/to/WiFiSocketServerRTOS$ make
 
 1. Download the [pre-packaged MSYS environment](https://dl.espressif.com/dl/esp32_win32_msys2_environment_and_toolchain-20181001.zip) and [toolchain](https://dl.espressif.com/dl/xtensa-lx106-elf-gcc8_4_0-esp-2020r3-win32.zip). Extract both to a directory on your system (recommend `C:\` for the pre-packaged MSYS environment, and `C:\msys32\opt` for the toolchain).
 
-2. Clone [ESP8266 RTOS SDK `release/v3.4`](https://github.com/espressif/ESP8266_RTOS_SDK). Make sure the path to the SDK has no spaces.
+2. Clone [ESP8266 RTOS SDK `dwss_support` branch](https://github.com/Duet3D/ESP8266_RTOS_SDK). Make sure the path to the SDK has no spaces.
 
 ```console
 user@pc /path/to
-$ git clone --branch release/v3.4 --recursive https://github.com/espressif/ESP8266_RTOS_SDK.git
+$ git clone --branch dwss_support --recursive https://github.com/Duet3D/ESP8266_RTOS_SDK.git
 ```
 
 3. Open a MINGW32 terminal (located at `C:\msys32\mingw32.exe` if the pre-packaged MSYS environment was extracted to `C:\` as recommended).
@@ -80,7 +80,7 @@ $ make
 
 #### **Eclipse**
 
-Follow the instructions for setting up the build environment with Eclipse on [Linux/macOS](https://docs.espressif.com/projects/esp8266-rtos-sdk/en/latest/get-started/eclipse-setup.html) or [Windows](https://docs.espressif.com/projects/esp8266-rtos-sdk/en/latest/get-started/eclipse-setup-windows.html#eclipse-windows-setup). Make sure to use ESP8266 RTOS SDK `release/v3.4`.
+Follow the instructions for setting up the build environment with Eclipse on [Linux/macOS](https://docs.espressif.com/projects/esp8266-rtos-sdk/en/latest/get-started/eclipse-setup.html) or [Windows](https://docs.espressif.com/projects/esp8266-rtos-sdk/en/latest/get-started/eclipse-setup-windows.html#eclipse-windows-setup). Make sure to use ESP8266 RTOS SDK `dwss_support` branch.
 
 Afterwards, import this project in the `Import New Project` step.
 
@@ -88,7 +88,7 @@ Afterwards, import this project in the `Import New Project` step.
 
 #### **Terminal (Windows/macOS/Linux)**
 
-1. Setup ESP-IDF `release/v4.4` according to your platform: [Linux/macOS](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/linux-macos-setup.html), [Windows](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/windows-setup.html).
+1. Setup ESP-IDF (use `dwss_support` branch) according to your platform: [Linux/macOS](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/linux-macos-setup.html), [Windows](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/windows-setup.html).
 
 2. Navigate to the WiFiSocketServerRTOS directory and execute the following command.  Once the build finishes, `DuetWiFiServer.bin`  will be in the `build` directory.
 
