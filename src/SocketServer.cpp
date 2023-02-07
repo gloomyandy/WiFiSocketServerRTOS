@@ -858,6 +858,12 @@ void ProcessRequest()
 	// Set up our own headers
 	messageHeaderIn.hdr.formatVersion = InvalidFormatVersion;
 	messageHeaderOut.hdr.formatVersion = MyFormatVersion;
+	/* When using a ST32 based main board we can sometimes see the first byte of an spi transfer be
+	   set to zero. This may now be fixed by adjustments to the spi configuration. However just in case
+	   we send a second signature word that is used by RRF on the ST32 to verify that the received 
+	   packet looks valid even though the first byte may be incorrect.
+	*/
+	messageHeaderOut.hdr.dummy32 = 0xdeadbeef;
 	messageHeaderOut.hdr.state = currentState;
 	bool deferCommand = false;
 
@@ -1562,8 +1568,9 @@ void ProcessRequest()
 		}
 	}
 
-	gpio_set_level(SamSSPin, 1);			// de-assert CS to SAM to end the transaction and tell SAM the transfer is complete
+	//gpio_set_level(SamSSPin, 1);			// de-assert CS to SAM to end the transaction and tell SAM the transfer is complete
 	hspi.endTransaction();
+	gpio_set_level(SamSSPin, 1);			// de-assert CS to SAM to end the transaction and tell SAM the transfer is complete
 
 	// If we deferred the command until after sending the response (e.g. because it may take some time to execute), complete it now
 	if (deferCommand)
