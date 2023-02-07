@@ -32,6 +32,22 @@
 #include "HSPI.h"
 #include "Config.h"
 
+/* STM32 Port notes:
+   For some reason using the original Duet3D SPI configuration results in sperodic data corruption,
+   in particular the first byte of a transfer to RRF is often 0. After much testing it seems that
+   two changes fix this problem. The first change is to add a short delay just at the start of an
+   spi transaction. The spi_pre_transmit_callback function is used to do this. The second change is
+   to prevent the esp32 code for attempting to adjust the timing of the spi signals. We do this by
+   a combination of ensuring that the "dummy byte" operation is not used and be setting the:
+   spi_pre_transmit_callback value to be such that the delay compensation is not used. This setting
+   needs to vary based on the spi clock speed and is set when selecting the clock.
+*/
+
+static void IRAM_ATTR spi_pre_transmit_callback(spi_transaction_t* arg)
+{
+	ets_delay_us(2);
+}
+
 static spi_device_handle_t spi;
 
 static void clockCtrl2Cfg(uint32_t val, spi_device_interface_config_t *devcfg)
@@ -40,16 +56,24 @@ static void clockCtrl2Cfg(uint32_t val, spi_device_interface_config_t *devcfg)
 	{
 	case 0x1001:
 		devcfg->clock_speed_hz = 80000000/2;
+		devcfg->input_delay_ns = 12;
 		break;
 	case 0x3403:
 		devcfg->clock_speed_hz = 80000000/4;
+		devcfg->input_delay_ns = 25;
 		break;
 	case 0x2001:
 	case 0x2402:
 	case 0x2002:
-	default:
 		devcfg->clock_speed_hz = 80000000/3;
+		devcfg->input_delay_ns = 25;
 		break;
+	case 0x2003:
+	default:
+		devcfg->clock_speed_hz = 80000000/4;
+		devcfg->input_delay_ns = 25;
+		break;
+
 	}
 }
 
@@ -68,7 +92,7 @@ void HSPIClass::InitMaster(uint8_t mode, uint32_t clockReg, bool msbFirst)
 	buscfg.quadwp_io_num = -1;
 	buscfg.quadhd_io_num = -1;
 	buscfg.max_transfer_sz = 0; // use default val
-	buscfg.flags = SPICOMMON_BUSFLAG_MASTER;
+    buscfg.flags = SPICOMMON_BUSFLAG_MASTER|SPICOMMON_BUSFLAG_IOMUX_PINS;
 	buscfg.intr_flags = ESP_INTR_FLAG_IRAM;
 
 	spi_device_interface_config_t devcfg;
@@ -77,6 +101,7 @@ void HSPIClass::InitMaster(uint8_t mode, uint32_t clockReg, bool msbFirst)
 	devcfg.spics_io_num = -1;
 	devcfg.flags = SPI_DEVICE_NO_DUMMY | (!msbFirst ? SPI_DEVICE_BIT_LSBFIRST : 0);
 	devcfg.queue_size = 4;
+	devcfg.pre_cb = spi_pre_transmit_callback;
 
 	clockCtrl2Cfg(clockReg, &devcfg);
 
