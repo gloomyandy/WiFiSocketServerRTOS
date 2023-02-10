@@ -88,7 +88,11 @@ Afterwards, import this project in the `Import New Project` step.
 
 #### **Terminal (Windows/macOS/Linux)**
 
-1. Setup ESP-IDF (use `dwss_support` branch) according to your platform: [Linux/macOS](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/linux-macos-setup.html), [Windows](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/windows-setup.html).
+1. Setup ESP-IDF according to your platform: [Linux/macOS](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/linux-macos-setup.html), [Windows](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/windows-setup.html). Use the Duet3D [esp-idf](https://github.com/Duet3D/esp-idf.git), `dwss_support` branch:
+    ```
+    git clone --branch dwss_support --recursive https://github.com/Duet3D/esp-idf.git
+    ```
+    On Windows, choose "`Use an existing ESP-IDF repository`" in the installation wizard, and point it to the resulting clone directory.
 
 2. Navigate to the WiFiSocketServerRTOS directory and execute the following command.  Once the build finishes, `DuetWiFiServer.bin`  will be in the `build` directory.
 
