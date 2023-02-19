@@ -62,10 +62,11 @@ const gpio_num_t EspReqTransferPin = GPIO_NUM_0;
 const gpio_num_t SamTfrReadyPin = GPIO_NUM_8;
 const gpio_num_t OnboardLedPin = GPIO_NUM_6;
 #elif CONFIG_IDF_TARGET_ESP32
-const gpio_num_t SamSSPin = GPIO_NUM_5;
-const gpio_num_t EspReqTransferPin = GPIO_NUM_0;
-const gpio_num_t SamTfrReadyPin = GPIO_NUM_4;
-const gpio_num_t OnboardLedPin = GPIO_NUM_32;
+const gpio_num_t SamSSPin = GPIO_NUM_2;
+const gpio_num_t EspReqTransferPin = GPIO_NUM_4;
+const gpio_num_t SamTfrReadyPin = GPIO_NUM_5;
+const gpio_num_t OnboardLedPin = GPIO_NUM_17;
+const gpio_num_t ProgramDisable = GPIO_NUM_15;
 #else
 #error "pins not specifed for target chip"
 #endif
@@ -76,6 +77,7 @@ const uint8_t Backlog = 8;
 
 #define ARRAY_SIZE(_x) (sizeof(_x)/sizeof((_x)[0]))
 
+#define DEBUG
 #ifdef DEBUG
 #include "rom/ets_sys.h"
 #define debugPrint(_str)			ets_printf("%s(%d): %s", __FILE__, __LINE__, _str)
