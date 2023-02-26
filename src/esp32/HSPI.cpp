@@ -105,7 +105,15 @@ void HSPIClass::InitMaster(uint8_t mode, uint32_t clockReg, bool msbFirst)
 
 	clockCtrl2Cfg(clockReg, &devcfg);
 
-	//spi_bus_initialize(MSPI, &buscfg, SPI_DMA_CH_AUTO);
+#if SUPPORT_ETHERNET
+	// for reasons I don't understand when running over ethernet and using DMA we occasionaly
+	// get a read that returns all zeros. With WiFi DMA seems fine. For now we use polled I/O
+	// for ethernet builds. NOTE: This requires a modified version of the esp32 code to support
+	// packets larger the 64 bits.
+	spi_bus_initialize(MSPI, &buscfg, SPI_DMA_DISABLED);
+#else
+	spi_bus_initialize(MSPI, &buscfg, SPI_DMA_CH_AUTO);
+#endif
 	spi_bus_initialize(MSPI, &buscfg, SPI_DMA_DISABLED);
 	spi_bus_add_device(MSPI, &devcfg, &spi);
 

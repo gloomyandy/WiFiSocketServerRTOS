@@ -5,7 +5,7 @@
 
 #define NO_WIFI_SLEEP	0
 
-#define VERSION_MAIN	"2.1beta3"
+#define VERSION_MAIN	"2.1beta3-02"
 
 #if NO_WIFI_SLEEP
 #define VERSION_SLEEP	"-nosleep"
@@ -62,11 +62,18 @@ const gpio_num_t EspReqTransferPin = GPIO_NUM_0;
 const gpio_num_t SamTfrReadyPin = GPIO_NUM_8;
 const gpio_num_t OnboardLedPin = GPIO_NUM_6;
 #elif CONFIG_IDF_TARGET_ESP32
+# if SUPPORT_ETHERNET
 const gpio_num_t SamSSPin = GPIO_NUM_2;
 const gpio_num_t EspReqTransferPin = GPIO_NUM_4;
 const gpio_num_t SamTfrReadyPin = GPIO_NUM_5;
 const gpio_num_t OnboardLedPin = GPIO_NUM_17;
 const gpio_num_t ProgramDisable = GPIO_NUM_15;
+# else
+const gpio_num_t SamSSPin = GPIO_NUM_5;
+const gpio_num_t EspReqTransferPin = GPIO_NUM_0;
+const gpio_num_t SamTfrReadyPin = GPIO_NUM_4;
+const gpio_num_t OnboardLedPin = GPIO_NUM_32;
+# endif
 #else
 #error "pins not specifed for target chip"
 #endif

@@ -107,7 +107,11 @@ static const char* WIFI_EVENT_EXT = "wifi_event_ext";
 
 static WirelessConfigurationMgr *wirelessConfigMgr;
 
-static esp_eth_handle_t eth_handle = NULL;
+#if SUPPORT_ETHERNET
+static esp_eth_handle_t EthHandle = NULL;
+static bool EthStarted = false;
+static const char * EthSSID = "ethernet";
+#endif
 
 typedef enum {
 	WIFI_IDLE = 0,
@@ -780,17 +784,18 @@ void StartAccessPoint()
 	}
 }
 
+#if SUPPORT_ETHERNET
 /** Event handler for Ethernet events */
-static void eth_event_handler(void *arg, esp_event_base_t event_base,
+static void HandleEthEvent(void *arg, esp_event_base_t event_base,
                               int32_t event_id, void *event_data)
 {
     uint8_t mac_addr[6] = {0};
     /* we can get the ethernet driver handle from event data */
-    esp_eth_handle_t eth_handle = *(esp_eth_handle_t *)event_data;
+    esp_eth_handle_t EthHandle = *(esp_eth_handle_t *)event_data;
 
     switch (event_id) {
     case ETHERNET_EVENT_CONNECTED:
-        esp_eth_ioctl(eth_handle, ETH_CMD_G_MAC_ADDR, mac_addr);
+        esp_eth_ioctl(EthHandle, ETH_CMD_G_MAC_ADDR, mac_addr);
         debugPrint("Ethernet Link Up");
         debugPrintf("Ethernet HW Addr %02x:%02x:%02x:%02x:%02x:%02x",
                  mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
@@ -810,7 +815,7 @@ static void eth_event_handler(void *arg, esp_event_base_t event_base,
 }
 
 /** Event handler for IP_EVENT_ETH_GOT_IP */
-static void got_ip_event_handler(void *arg, esp_event_base_t event_base,
+static void GotEthIP(void *arg, esp_event_base_t event_base,
                                  int32_t event_id, void *event_data)
 {
     ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
@@ -831,8 +836,11 @@ pre(currentState == WiFiState::idle)
 {
 	currentState = WiFiState::connecting;
 	usingDhcpc = true;
-    ESP_ERROR_CHECK(esp_eth_start(eth_handle));
+	EthStarted = true;
+    ESP_ERROR_CHECK(esp_eth_start(EthHandle));
+	mdns_init();
 }
+#endif
 
 static union
 {
@@ -1074,18 +1082,33 @@ void ProcessRequest()
 
 				if (runningAsAp || runningAsStation)
 				{
-					//esp_wifi_get_mac(runningAsStation ? WIFI_IF_STA : WIFI_IF_AP, response->macAddress);
-        			esp_eth_ioctl(eth_handle, ETH_CMD_G_MAC_ADDR, response->macAddress);
+#if SUPPORT_ETHERNET
+					if (EthStarted)
+					{
+        				esp_eth_ioctl(EthHandle, ETH_CMD_G_MAC_ADDR, response->macAddress);
+					}
+					else
+#endif
+					{
+						esp_wifi_get_mac(runningAsStation ? WIFI_IF_STA : WIFI_IF_AP, response->macAddress);
+					}
 					if (runningAsStation)
 					{
 						wifi_ap_record_t ap_info;
 						memset(&ap_info, 0, sizeof(ap_info));
-#if 0
-						esp_wifi_sta_get_ap_info(&ap_info);
-						response->rssi = ap_info.rssi;
-						response->auth = EspAuthModeToWiFiAuth(ap_info.authmode);
-						SafeStrncpy(response->ssid, (const char*)ap_info.ssid, sizeof(response->ssid));
+#if SUPPORT_ETHERNET
+						if (EthStarted)
+						{
+							SafeStrncpy(response->ssid, EthSSID, strlen(EthSSID)+1);
+						}
+						else							
 #endif
+						{
+							esp_wifi_sta_get_ap_info(&ap_info);
+							response->rssi = ap_info.rssi;
+							response->auth = EspAuthModeToWiFiAuth(ap_info.authmode);
+							SafeStrncpy(response->ssid, (const char*)ap_info.ssid, sizeof(response->ssid));
+						}
 					}
 					else
 					{
@@ -1101,47 +1124,52 @@ void ProcessRequest()
 					}
 
 					tcpip_adapter_ip_info_t ip_info;
-					//tcpip_adapter_get_ip_info(runningAsStation ? TCPIP_ADAPTER_IF_STA : TCPIP_ADAPTER_IF_AP, &ip_info);
-					tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_ETH, &ip_info);
+#if SUPPORT_ETHERNET
+					tcpip_adapter_get_ip_info(runningAsStation ? (EthStarted ? TCPIP_ADAPTER_IF_ETH : TCPIP_ADAPTER_IF_STA) : TCPIP_ADAPTER_IF_AP, &ip_info);
+#else
+					tcpip_adapter_get_ip_info(runningAsStation ? TCPIP_ADAPTER_IF_STA : TCPIP_ADAPTER_IF_AP, &ip_info);
+#endif
 					response->ipAddress = ip_info.ip.addr;
 					response->netmask = ip_info.netmask.addr;
 					response->gateway = ip_info.gw.addr;
-#if 0
-					uint8_t pChan;
-					wifi_second_chan_t sChan;
-					esp_wifi_get_channel(&pChan, &sChan);
-					response->channel = pChan;
-
-					switch (sChan)
-					{
-					case WIFI_SECOND_CHAN_NONE:
-						response->ht = static_cast<uint8_t>(HTMode::HT20);
-						break;
-
-					case WIFI_SECOND_CHAN_ABOVE:
-						response->ht = static_cast<uint8_t>(HTMode::HT40_ABOVE);
-						break;
-
-					case WIFI_SECOND_CHAN_BELOW:
-						response->ht = static_cast<uint8_t>(HTMode::HT40_BELOW);
-						break;
-
-					default:
-						break;
-					}
-
-					uint8_t EspWiFiPhyMode = 0;
-					esp_wifi_get_protocol(runningAsStation ? WIFI_IF_STA : WIFI_IF_AP, &EspWiFiPhyMode);
-
-					if (EspWiFiPhyMode | WIFI_PROTOCOL_11N) {
-						response->phyMode = static_cast<int>(EspWiFiPhyMode::N);
-					} else if (EspWiFiPhyMode | WIFI_PROTOCOL_11G) {
-						response->phyMode = static_cast<int>(EspWiFiPhyMode::G);
-					} else if (EspWiFiPhyMode | WIFI_PROTOCOL_11B) {
-						response->phyMode = static_cast<int>(EspWiFiPhyMode::B);
-					}
+#if SUPPORT_ETHERNET
+					if (!EthStarted)
 #endif
+					{
+						uint8_t pChan;
+						wifi_second_chan_t sChan;
+						esp_wifi_get_channel(&pChan, &sChan);
+						response->channel = pChan;
 
+						switch (sChan)
+						{
+						case WIFI_SECOND_CHAN_NONE:
+							response->ht = static_cast<uint8_t>(HTMode::HT20);
+							break;
+
+						case WIFI_SECOND_CHAN_ABOVE:
+							response->ht = static_cast<uint8_t>(HTMode::HT40_ABOVE);
+							break;
+
+						case WIFI_SECOND_CHAN_BELOW:
+							response->ht = static_cast<uint8_t>(HTMode::HT40_BELOW);
+							break;
+
+						default:
+							break;
+						}
+
+						uint8_t EspWiFiPhyMode = 0;
+						esp_wifi_get_protocol(runningAsStation ? WIFI_IF_STA : WIFI_IF_AP, &EspWiFiPhyMode);
+
+						if (EspWiFiPhyMode | WIFI_PROTOCOL_11N) {
+							response->phyMode = static_cast<int>(EspWiFiPhyMode::N);
+						} else if (EspWiFiPhyMode | WIFI_PROTOCOL_11G) {
+							response->phyMode = static_cast<int>(EspWiFiPhyMode::G);
+						} else if (EspWiFiPhyMode | WIFI_PROTOCOL_11B) {
+							response->phyMode = static_cast<int>(EspWiFiPhyMode::B);
+						}
+					}
 				}
 
 				response->freeHeap = esp_get_free_heap_size();
@@ -1646,17 +1674,20 @@ void ProcessRequest()
 		switch (messageHeaderIn.hdr.command)
 		{
 		case NetworkCommand::networkStartClient:			// connect to an access point
-#if 0
 			if (messageHeaderIn.hdr.dataLength == 0 || reinterpret_cast<const char*>(transferBuffer)[0] == 0)
 			{
 				StartClient(nullptr);						// connect to strongest known access point
 			}
+#if SUPPORT_ETHERNET
+			else if (!strcmp(reinterpret_cast<const char*>(transferBuffer), EthSSID))
+			{
+				EthStartClient();
+			}
+#endif
 			else
 			{
 				StartClient(reinterpret_cast<const char*>(transferBuffer));		// connect to specified access point
 			}
-#endif
-			EthStartClient();
 			break;
 
 		case NetworkCommand::networkStartAccessPoint:		// run as an access point
@@ -1674,7 +1705,16 @@ void ProcessRequest()
 			case WiFiState::reconnecting:
 				RemoveMdnsServices();
 				delay(20);									// try to give lwip time to recover from stopping everything
-				esp_wifi_stop();
+#if SUPPORT_ETHERNET
+				if (EthStarted)
+				{
+					esp_eth_stop(EthHandle);
+				}
+				else
+#endif
+				{
+					esp_wifi_stop();
+				}
 				break;
 
 			case WiFiState::runningAsAccessPoint:
@@ -1772,7 +1812,7 @@ delay(1000);
 #pragma GCC diagnostic pop
 
 	esp_event_loop_create_default();
-#if 0
+
 	esp_event_handler_register(WIFI_EVENT_EXT, WIFI_EVENT_STA_CONNECTING, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_CONNECTED, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &HandleWiFiEvent, NULL);
@@ -1793,7 +1833,8 @@ debugPrintAlways("Starting connPoll\n");
 	esp_log_level_set("wifi", ESP_LOG_NONE);
 
 	wirelessConfigMgr->Init();
-#else
+
+#if SUPPORT_ETHERNET
 	// Make sure that we tristate the connection to GPIO0 to prevent conflicts
 	// with the eth clock.
 	gpio_reset_pin(ProgramDisable);
@@ -1802,8 +1843,8 @@ debugPrintAlways("Starting connPoll\n");
 
 debugPrint("Start eth init\n");
     ESP_ERROR_CHECK(tcpip_adapter_set_default_eth_handlers());
-    ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, &eth_event_handler, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &got_ip_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, &HandleEthEvent, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &GotEthIP, NULL));
 debugPrintf("Current core is %x\n", xPortGetCoreID());
     eth_mac_config_t mac_config = ETH_MAC_DEFAULT_CONFIG();
     eth_phy_config_t phy_config = ETH_PHY_DEFAULT_CONFIG();
@@ -1815,7 +1856,7 @@ debugPrintf("Current core is %x\n", xPortGetCoreID());
     esp_eth_phy_t *phy = esp_eth_phy_new_lan8720(&phy_config);
 debugPrint("Install driver\n");
     esp_eth_config_t config = ETH_DEFAULT_CONFIG(mac, phy);
-    ESP_ERROR_CHECK(esp_eth_driver_install(&config, &eth_handle));
+    ESP_ERROR_CHECK(esp_eth_driver_install(&config, &EthHandle));
 #endif
 	// Set up SPI hardware and request handling
 	gpio_reset_pin(SamTfrReadyPin);
