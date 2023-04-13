@@ -115,6 +115,9 @@ struct WiFiScanData
 	int8_t rssi;	/* signal strength from -100 to 0 in dB */
 	EspWiFiPhyMode phymode;
 	WiFiAuth auth;
+	uint8_t primaryChannel;
+	uint8_t mac[6];
+	uint8_t spare[2];			// spare fore future use
 	char ssid[SsidLength + 1];
 };
 

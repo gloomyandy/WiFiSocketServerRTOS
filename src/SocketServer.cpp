@@ -1455,13 +1455,15 @@ void ProcessRequest()
 				if (wifiScanNum > 0) {
 					// By default the records are sorted by signal strength, so just
 					// send all ap records that fit the transfer buffer.
-					for(int i = 0; i < wifiScanNum && data_sz <= sizeof(transferBuffer); i++, data_sz += sizeof(WiFiScanData))
+					for (int i = 0; i < wifiScanNum && data_sz <= sizeof(transferBuffer); i++, data_sz += sizeof(WiFiScanData))
 					{
 						const wifi_ap_record_t& ap = wifiScanAPs[i];
 						WiFiScanData &d = reinterpret_cast<WiFiScanData*>(transferBuffer)[i];
-						SafeStrncpy((char*)(d.ssid), (char*)ap.ssid,
-							std::min(sizeof(d.ssid), sizeof(ap.ssid)));
+						SafeStrncpy((char*)(d.ssid), (const char*)ap.ssid, std::min(sizeof(d.ssid), sizeof(ap.ssid)));
 						d.rssi = ap.rssi;
+						d.primaryChannel = ap.primary;
+						memcpy(d.mac, ap.bssid, sizeof(d.mac));
+						memset(d.spare, 0, sizeof(d.spare));
 
 						if (ap.phy_11n) {
 							d.phymode = EspWiFiPhyMode::N;
