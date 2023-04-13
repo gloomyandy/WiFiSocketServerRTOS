@@ -114,7 +114,6 @@ void HSPIClass::InitMaster(uint8_t mode, uint32_t clockReg, bool msbFirst)
 #else
 	spi_bus_initialize(MSPI, &buscfg, SPI_DMA_CH_AUTO);
 #endif
-	//spi_bus_initialize(MSPI, &buscfg, SPI_DMA_DISABLED);
 	spi_bus_add_device(MSPI, &devcfg, &spi);
 
 	spi_device_acquire_bus(spi, portMAX_DELAY);
