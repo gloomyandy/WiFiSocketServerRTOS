@@ -90,7 +90,8 @@ struct MessageHeaderSamToEsp
 	static const uint8_t FlagPush = 0x02;
 };
 
-enum class EspWiFiPhyMode {
+enum class EspWiFiPhyMode : uint8_t 
+{
 	B = 1,
 	G = 2,
 	N = 3,
