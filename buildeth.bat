@@ -1,0 +1,1 @@
+idf.py -DSUPPORT_ETHERNET=1 set-target esp32 build

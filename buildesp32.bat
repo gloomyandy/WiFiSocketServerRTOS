@@ -1,0 +1,1 @@
+idf.py set-target esp32 build
