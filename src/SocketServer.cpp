@@ -597,7 +597,10 @@ pre(currentState == WiFiState::idle)
 			esp_wifi_sta_wpa2_ent_set_username(base + offsets.asMemb.peapttls.identity, sizes.asMemb.peapttls.identity);
 			esp_wifi_sta_wpa2_ent_set_password(base + offsets.asMemb.peapttls.password, sizes.asMemb.peapttls.password);
 #ifndef ESP8266
-			esp_wifi_sta_wpa2_ent_set_ttls_phase2_method(ESP_EAP_TTLS_PHASE2_MSCHAPV2);
+			if (wp.eap.protocol == EAPProtocol::EAP_TTLS_MSCHAPV2)
+			{
+				esp_wifi_sta_wpa2_ent_set_ttls_phase2_method(ESP_EAP_TTLS_PHASE2_MSCHAPV2);
+			}
 #endif
 		}
 		else
