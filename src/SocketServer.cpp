@@ -710,10 +710,10 @@ void StartAccessPoint()
 		{
 			wifi_config_t wifi_config;
 			memset(&wifi_config, 0, sizeof(wifi_config));
-			SafeStrncpy((char*)wifi_config.sta.ssid, apData.ssid,
-				std::min(sizeof(wifi_config.sta.ssid), sizeof(apData.ssid)));
-			SafeStrncpy((char*)wifi_config.sta.password, (char*)apData.password,
-				std::min(sizeof(wifi_config.sta.password), sizeof(apData.password)));
+			SafeStrncpy((char*)wifi_config.ap.ssid, apData.ssid,
+				std::min(sizeof(wifi_config.ap.ssid), sizeof(apData.ssid)));
+			SafeStrncpy((char*)wifi_config.ap.password, (char*)apData.password,
+				std::min(sizeof(wifi_config.ap.password), sizeof(apData.password)));
 			wifi_config.ap.authmode = WIFI_AUTH_WPA_WPA2_PSK;
 			wifi_config.ap.channel = (apData.channel == 0) ? DefaultWiFiChannel : apData.channel;
 			wifi_config.ap.max_connection = MaxAPConnections;
