@@ -459,6 +459,8 @@ pre(currentState == WiFiState::idle)
 	WirelessConfigurationData wp;
 	esp_wifi_stop();
 
+	int8_t channel = -1;
+
 	if (ssid == nullptr || ssid[0] == 0)
 	{
 		ConfigureSTAMode();
@@ -504,6 +506,7 @@ pre(currentState == WiFiState::idle)
 		if (strongestNetwork >= 0) {
 			SafeStrncpy(ssid, (const char*)ap_records[strongestNetwork].ssid,
 						std::min(sizeof(ssid), sizeof(ap_records[strongestNetwork].ssid)));
+			channel = ap_records[strongestNetwork].primary;
 		}
 
 		free(ap_records);
@@ -534,6 +537,15 @@ pre(currentState == WiFiState::idle)
 	memset(&wifi_config, 0, sizeof(wifi_config));
 	SafeStrncpy((char*)wifi_config.sta.ssid, (char*)wp.ssid,
 		std::min(sizeof(wifi_config.sta.ssid), sizeof(wp.ssid)));
+
+	if (channel >= 0 && channel <= 13)
+	{
+		wifi_config.sta.channel = channel;
+	}
+	else
+	{
+		wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+	}
 
 	if (wp.eap.protocol == EAPProtocol::NONE)
 	{
