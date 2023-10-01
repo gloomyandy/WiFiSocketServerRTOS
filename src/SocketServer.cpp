@@ -490,7 +490,7 @@ pre(currentState == WiFiState::idle)
 		int8_t strongestNetwork = -1;
 		for (int8_t i = 0; i < num_ssids; ++i)
 		{
-			debugPrintfAlways("found network %s\n", ap_records[i].ssid);
+			debugPrintfAlways("found network '%s' on channel=%d, rssi=%d\n", ap_records[i].ssid, ap_records[i].primary, ap_records[i].rssi);
 			if (strongestNetwork < 0 || ap_records[i].rssi > ap_records[strongestNetwork].rssi)
 			{
 				WirelessConfigurationData temp;
