@@ -105,6 +105,14 @@ static const char* WIFI_EVENT_EXT = "wifi_event_ext";
 
 static WirelessConfigurationMgr *wirelessConfigMgr;
 
+// Workaround for https://github.com/espressif/esp-idf/issues/12315, remove once issue is fixed.
+// To summarize: Initial connection attempt on some access points fail when the
+// previous connection was not severed cleanly, for example when power is removed
+// suddenly or a board reset without calling M552 S0.
+static uint32_t firstConnectFailCnt = 0;
+static uint32_t firstConnectFailMax = 2;
+static bool firstConnect = true;
+
 typedef enum {
 	WIFI_IDLE = 0,
 	STATION_CONNECTING,
@@ -154,6 +162,11 @@ bool ValidSocketNumber(uint8_t num)
 	return false;
 }
 
+static inline bool isFirstConnectWorkaround()
+{
+	return firstConnect && (firstConnectFailCnt <= firstConnectFailMax);
+}
+
 static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 								int32_t event_id, void* event_data)
 {
@@ -197,6 +210,22 @@ static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 			// The disconnection was not triggered by an explicit disconnection command
 			// by RRF, and will cause reconnection attempts. Count them here.
 			numWifiReconnects++;
+		}
+
+		if (firstConnect)
+		{
+			if (disconnected->reason == WIFI_REASON_AUTH_EXPIRE)
+			{
+				firstConnectFailCnt++;
+			}
+
+			// The first connection attempt seems to emit two events. First one is for WIFI_REASON_AUTH_EXPIRE
+			// and the second is for WIFI_REASON_CONNECTION_FAIL. Change the second event
+			// to an authentication attempt error.
+			if (firstConnectFailCnt && disconnected->reason == WIFI_REASON_CONNECTION_FAIL)
+			{
+				wifiEvt = STATION_WRONG_PASSWORD;
+			}
 		}
 	} else if (event_base == WIFI_EVENT && (event_id == WIFI_EVENT_STA_STOP || event_id == WIFI_EVENT_AP_STOP)) {
 		wifiEvt = WIFI_IDLE;
@@ -310,7 +339,8 @@ void ConnectPoll(void* data)
 					break;
 
 				case STATION_WRONG_PASSWORD:
-					error = "Authentication failed";
+					retry = isFirstConnectWorkaround();
+					error = retry ? nullptr : "Authentication failed";
 					break;
 
 				case STATION_NO_AP_FOUND:
@@ -325,11 +355,11 @@ void ConnectPoll(void* data)
 
 				case STATION_GOT_IP:
 					xTimerStop(connExpTmr, portMAX_DELAY);
-					if (currentState == WiFiState::reconnecting)
+					if (currentState == WiFiState::reconnecting && !isFirstConnectWorkaround())
 					{
 						lastError = "Reconnect succeeded";
 					}
-
+					firstConnect = false;
 					debugPrint("Connected to AP\n");
 					currentState = WiFiState::connected;
 					break;
