@@ -63,11 +63,16 @@ const gpio_num_t SamTfrReadyPin = GPIO_NUM_8;
 const gpio_num_t OnboardLedPin = GPIO_NUM_6;
 #elif CONFIG_IDF_TARGET_ESP32
 # if SUPPORT_ETHERNET
-const gpio_num_t SamSSPin = GPIO_NUM_2;
-const gpio_num_t EspReqTransferPin = GPIO_NUM_4;
-const gpio_num_t SamTfrReadyPin = GPIO_NUM_5;
+#  if ETH_V0
 const gpio_num_t OnboardLedPin = GPIO_NUM_17;
+const gpio_num_t EspReqTransferPin = GPIO_NUM_4;
 const gpio_num_t ProgramDisable = GPIO_NUM_15;
+#  else
+const gpio_num_t OnboardLedPin = GPIO_NUM_32;
+const gpio_num_t EspReqTransferPin = GPIO_NUM_0;
+#  endif
+const gpio_num_t SamSSPin = GPIO_NUM_2;
+const gpio_num_t SamTfrReadyPin = GPIO_NUM_5;
 # else
 const gpio_num_t SamSSPin = GPIO_NUM_5;
 const gpio_num_t EspReqTransferPin = GPIO_NUM_0;

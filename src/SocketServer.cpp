@@ -1837,12 +1837,13 @@ debugPrintAlways("Starting connPoll\n");
 	wirelessConfigMgr->Init();
 
 #if SUPPORT_ETHERNET
+# if ETH_V0
 	// Make sure that we tristate the connection to GPIO0 to prevent conflicts
 	// with the eth clock.
 	gpio_reset_pin(ProgramDisable);
 	gpio_set_direction(ProgramDisable, GPIO_MODE_OUTPUT);
 	gpio_set_level(ProgramDisable, 0);
-
+# endif
 debugPrint("Start eth init\n");
     ESP_ERROR_CHECK(tcpip_adapter_set_default_eth_handlers());
     ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, &HandleEthEvent, NULL));
