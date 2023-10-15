@@ -68,6 +68,11 @@ static const uint32_t MaxConnectTime = 40 * 1000;			// how long we wait for WiFi
 static const uint32_t TransferReadyTimeout = 10;			// how many milliseconds we allow for the Duet to set
 													// TransferReady low after the end of a transaction,
 													// before we assume that we missed seeing it
+#if ESP8266
+static const uint32_t MaxConnectRetry = 0;					// Don't retry on esp8266
+#else
+static const uint32_t MaxConnectRetry = 5;					// How many times to retry a connect to an AP
+#endif
 #define array _ecv_array
 
 static const uint32_t StatusReportMillis = 200;
@@ -95,6 +100,7 @@ static volatile const char* lastError = nullptr;
 static volatile const char* prevLastError = nullptr;
 static volatile WiFiState currentState = WiFiState::idle,
 				lastReportedState = WiFiState::disabled;
+static volatile uint32_t connectRetryCount = 0;
 
 static HSPIClass hspi;
 static uint32_t transferBuffer[NumDwords(MaxDataLength + 1)];
@@ -166,7 +172,6 @@ static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 								int32_t event_id, void* event_data)
 {
 	wifi_evt_t wifiEvt = WIFI_IDLE;
-
 	if (event_base == WIFI_EVENT_EXT && event_id == WIFI_EVENT_STA_CONNECTING) {
 		wifiEvt = STATION_CONNECTING;
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED) {
@@ -318,7 +323,15 @@ void ConnectPoll(void* data)
 					break;
 
 				case STATION_WRONG_PASSWORD:
-					error = "Authentication failed";
+					if (connectRetryCount < MaxConnectRetry)
+					{
+						retry = true;
+						debugPrint("Conect failed (password) retrying\n");
+					}
+					else
+					{
+						error = "Authentication failed";
+					}
 					break;
 
 				case STATION_NO_AP_FOUND:
@@ -327,8 +340,16 @@ void ConnectPoll(void* data)
 					break;
 
 				case STATION_CONNECT_FAIL:
-					error = "Failed";
-					retry = (currentState == WiFiState::reconnecting);
+					if (connectRetryCount < MaxConnectRetry)
+					{
+						retry = true;
+						debugPrint("Conect failed (connect) retrying\n");
+					}
+					else
+					{
+						error = "Failed";
+						retry = (currentState == WiFiState::reconnecting);
+					}
 					break;
 
 				case STATION_GOT_IP:
@@ -425,8 +446,16 @@ void ConnectPoll(void* data)
 		{
 			WirelessConfigurationData wp;
 			wirelessConfigMgr->GetSsid(currentSsid, wp);
-			currentState = WiFiState::reconnecting;
-			debugPrintf("Trying to reconnect to ssid \"%s\" with password \"%s\"\n", wp.ssid, wp.password);
+			if (currentState == WiFiState::connecting)
+			{
+				connectRetryCount++;
+				debugPrint("Retry connect\n");
+			}
+			else
+			{
+				currentState = WiFiState::reconnecting;
+				debugPrintf("Trying to reconnect to ssid \"%s\" with password \"%s\"\n", wp.ssid, wp.password);
+			}
 			ConnectToAccessPoint();
 		}
 
@@ -643,6 +672,7 @@ pre(currentState == WiFiState::idle)
 
 	// ssidData contains the details of the strongest known access point
 	debugPrintf("Trying to connect to ssid \"%s\" with password \"%s\"\n", wp.ssid, wp.password);
+	connectRetryCount = 0;
 	ConnectToAccessPoint();
 }
 
