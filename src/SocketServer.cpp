@@ -522,7 +522,10 @@ pre(currentState == WiFiState::idle)
 		int8_t strongestNetwork = -1;
 		for (int8_t i = 0; i < num_ssids; ++i)
 		{
-			debugPrintfAlways("found network '%s' on channel=%d, rssi=%d\n", ap_records[i].ssid, ap_records[i].primary, ap_records[i].rssi);
+			debugPrintfAlways("found network '%s' on channel=%d, rssi=%d mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
+								ap_records[i].ssid, ap_records[i].primary, ap_records[i].rssi,
+								ap_records[i].bssid[0], ap_records[i].bssid[1], ap_records[i].bssid[2],
+								ap_records[i].bssid[3], ap_records[i].bssid[4], ap_records[i].bssid[5]);
 			if (strongestNetwork < 0 || ap_records[i].rssi > ap_records[strongestNetwork].rssi)
 			{
 				WirelessConfigurationData temp;
@@ -541,6 +544,10 @@ pre(currentState == WiFiState::idle)
 #ifndef ESP8266
 			channel = ap_records[strongestNetwork].primary;
 #endif
+			debugPrintfAlways("strongest known network '%s' on channel=%d, rssi=%d mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
+								ap_records[strongestNetwork].ssid, ap_records[strongestNetwork].primary, ap_records[strongestNetwork].rssi,
+								ap_records[strongestNetwork].bssid[0], ap_records[strongestNetwork].bssid[1], ap_records[strongestNetwork].bssid[2],
+								ap_records[strongestNetwork].bssid[3], ap_records[strongestNetwork].bssid[4], ap_records[strongestNetwork].bssid[5]);
 		}
 
 		free(ap_records);
