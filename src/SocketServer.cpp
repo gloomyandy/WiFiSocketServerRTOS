@@ -114,9 +114,17 @@ static const char* WIFI_EVENT_EXT = "wifi_event_ext";
 static WirelessConfigurationMgr *wirelessConfigMgr;
 
 #if SUPPORT_ETHERNET
-static esp_eth_handle_t EthHandle = NULL;
-static bool EthStarted = false;
-static const char * EthSSID = "ethernet";
+enum class EthState : uint8_t
+{
+	disabled = 0,					// Hardware not yet initialised
+	idle = 1,						// Hardware initialised but not connected
+	started = 2,
+	connected = 4,
+};
+
+static esp_eth_handle_t ethHandle = NULL;
+static EthState  ethState = EthState::disabled;
+static const char * ethSSID = "ethernet";
 #endif
 
 typedef enum {
@@ -817,59 +825,118 @@ void StartAccessPoint()
 #if SUPPORT_ETHERNET
 /** Event handler for Ethernet events */
 static void HandleEthEvent(void *arg, esp_event_base_t event_base,
-                              int32_t event_id, void *event_data)
+							int32_t event_id, void *event_data)
 {
-    uint8_t mac_addr[6] = {0};
-    /* we can get the ethernet driver handle from event data */
-    esp_eth_handle_t EthHandle = *(esp_eth_handle_t *)event_data;
+	uint8_t mac_addr[6] = {0};
+	/* we can get the ethernet driver handle from event data */
+	esp_eth_handle_t ethHandle = *(esp_eth_handle_t *)event_data;
 
-    switch (event_id) {
-    case ETHERNET_EVENT_CONNECTED:
-        esp_eth_ioctl(EthHandle, ETH_CMD_G_MAC_ADDR, mac_addr);
-        debugPrint("Ethernet Link Up");
-        debugPrintf("Ethernet HW Addr %02x:%02x:%02x:%02x:%02x:%02x",
-                 mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
-        break;
-    case ETHERNET_EVENT_DISCONNECTED:
-        debugPrint("Ethernet Link Down");
-        break;
-    case ETHERNET_EVENT_START:
-        debugPrint("Ethernet Started");
-        break;
-    case ETHERNET_EVENT_STOP:
-        debugPrint("Ethernet Stopped");
-        break;
-    default:
-        break;
-    }
+	switch (event_id) {
+	case ETHERNET_EVENT_CONNECTED:
+		tcpip_adapter_set_hostname(TCPIP_ADAPTER_IF_ETH, webHostName);
+		if (!usingDhcpc)
+		{
+			tcpip_adapter_dhcpc_stop(TCPIP_ADAPTER_IF_ETH);
+			tcpip_adapter_set_ip_info(TCPIP_ADAPTER_IF_ETH, &staIpInfo);
+		}
+		esp_eth_ioctl(ethHandle, ETH_CMD_G_MAC_ADDR, mac_addr);
+		debugPrint("Ethernet Link Up\n");
+		debugPrintf("Ethernet HW Addr %02x:%02x:%02x:%02x:%02x:%02x\n",
+					mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+		break;
+	case ETHERNET_EVENT_DISCONNECTED:
+		debugPrint("Ethernet Link Down\n");
+		break;
+	case ETHERNET_EVENT_START:
+		debugPrint("Ethernet Started\n");
+		ethState = EthState::started;
+		break;
+	case ETHERNET_EVENT_STOP:
+		debugPrint("Ethernet Stopped\n");
+		ethState = EthState::idle;
+		currentState = WiFiState::idle;
+		break;
+	default:
+		break;
+	}
 }
 
 /** Event handler for IP_EVENT_ETH_GOT_IP */
 static void GotEthIP(void *arg, esp_event_base_t event_base,
-                                 int32_t event_id, void *event_data)
+						int32_t event_id, void *event_data)
 {
-    ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
-    const esp_netif_ip_info_t *ip_info = &event->ip_info;
+	ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
+	const esp_netif_ip_info_t *ip_info = &event->ip_info;
 
-    debugPrint("Ethernet Got IP Address\n");
-    debugPrint("~~~~~~~~~~~\n");
-    debugPrintf("ETHIP:" IPSTR, IP2STR(&ip_info->ip));
-    debugPrintf("ETHMASK:" IPSTR, IP2STR(&ip_info->netmask));
-    debugPrintf("ETHGW:" IPSTR, IP2STR(&ip_info->gw));
-    debugPrint("~~~~~~~~~~~\n");
+	debugPrint("Ethernet Got IP Address\n");
+	debugPrint("~~~~~~~~~~~\n");
+	debugPrintf("ETHIP:" IPSTR, IP2STR(&ip_info->ip));
+	debugPrintf("ETHMASK:" IPSTR, IP2STR(&ip_info->netmask));
+	debugPrintf("ETHGW:" IPSTR, IP2STR(&ip_info->gw));
+	debugPrint("~~~~~~~~~~~\n");
 	currentState = WiFiState::connected;
 	xTaskNotify(mainTaskHdl, TFR_REQUEST, eSetBits);
+}
+
+void EthInit()
+{
+	debugPrint("Start eth init\n");
+	ESP_ERROR_CHECK(tcpip_adapter_set_default_eth_handlers());
+	ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, &HandleEthEvent, NULL));
+	ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &GotEthIP, NULL));
+	debugPrintf("Current core is %x\n", xPortGetCoreID());
+	eth_mac_config_t mac_config = ETH_MAC_DEFAULT_CONFIG();
+	eth_phy_config_t phy_config = ETH_PHY_DEFAULT_CONFIG();
+	phy_config.phy_addr = 1;
+	phy_config.reset_gpio_num = 16;
+	mac_config.smi_mdc_gpio_num = 23;
+	mac_config.smi_mdio_gpio_num = 18;
+	esp_eth_mac_t *mac = esp_eth_mac_new_esp32(&mac_config);
+	esp_eth_phy_t *phy = esp_eth_phy_new_lan8720(&phy_config);
+	debugPrint("Install driver\n");
+	esp_eth_config_t config = ETH_DEFAULT_CONFIG(mac, phy);
+	ESP_ERROR_CHECK(esp_eth_driver_install(&config, &ethHandle));
+	ethState = EthState::idle;
 }
 
 void EthStartClient()
 pre(currentState == WiFiState::idle)
 {
+	if (ethState == EthState::disabled)
+	{
+		EthInit();
+	}
 	currentState = WiFiState::connecting;
-	usingDhcpc = true;
-	EthStarted = true;
-    ESP_ERROR_CHECK(esp_eth_start(EthHandle));
+
+	// Look to see if we have any ethernet specific IP configuration
+	memset(&staIpInfo, 0, sizeof(staIpInfo));
+	WirelessConfigurationData wp;
+	int idx = wirelessConfigMgr->GetSsid(ethSSID, wp);
+	if (idx > 0)
+	{
+		debugPrintf("Found ethernet config in slot %d\n", idx);
+	}
+	if (idx > 0 && wp.ip)
+	{
+		usingDhcpc = false;
+		staIpInfo.ip.addr = wp.ip;
+		staIpInfo.gw.addr = wp.gateway;
+
+		if(!wp.netmask) {
+			IP4_ADDR(&staIpInfo.netmask, 255, 255, 255, 0); // default to 255.255.255.0
+		} else {
+			staIpInfo.netmask.addr = wp.netmask;
+		}
+	}
+	else
+	{
+		usingDhcpc = true;
+		tcpip_adapter_dhcpc_start(TCPIP_ADAPTER_IF_ETH);
+	}
+	ESP_ERROR_CHECK(esp_eth_start(ethHandle));
 	mdns_init();
 }
+
 #endif
 
 static union
@@ -1113,9 +1180,9 @@ void ProcessRequest()
 				if (runningAsAp || runningAsStation)
 				{
 #if SUPPORT_ETHERNET
-					if (EthStarted)
+					if (ethState >= EthState::started)
 					{
-        				esp_eth_ioctl(EthHandle, ETH_CMD_G_MAC_ADDR, response->macAddress);
+						esp_eth_ioctl(ethHandle, ETH_CMD_G_MAC_ADDR, response->macAddress);
 					}
 					else
 #endif
@@ -1127,9 +1194,9 @@ void ProcessRequest()
 						wifi_ap_record_t ap_info;
 						memset(&ap_info, 0, sizeof(ap_info));
 #if SUPPORT_ETHERNET
-						if (EthStarted)
+						if (ethState >= EthState::started)
 						{
-							SafeStrncpy(response->ssid, EthSSID, strlen(EthSSID)+1);
+							SafeStrncpy(response->ssid, ethSSID, strlen(ethSSID)+1);
 						}
 						else							
 #endif
@@ -1155,7 +1222,7 @@ void ProcessRequest()
 
 					tcpip_adapter_ip_info_t ip_info;
 #if SUPPORT_ETHERNET
-					tcpip_adapter_get_ip_info(runningAsStation ? (EthStarted ? TCPIP_ADAPTER_IF_ETH : TCPIP_ADAPTER_IF_STA) : TCPIP_ADAPTER_IF_AP, &ip_info);
+					tcpip_adapter_get_ip_info(runningAsStation ? (ethState >= EthState::started ? TCPIP_ADAPTER_IF_ETH : TCPIP_ADAPTER_IF_STA) : TCPIP_ADAPTER_IF_AP, &ip_info);
 #else
 					tcpip_adapter_get_ip_info(runningAsStation ? TCPIP_ADAPTER_IF_STA : TCPIP_ADAPTER_IF_AP, &ip_info);
 #endif
@@ -1163,7 +1230,7 @@ void ProcessRequest()
 					response->netmask = ip_info.netmask.addr;
 					response->gateway = ip_info.gw.addr;
 #if SUPPORT_ETHERNET
-					if (!EthStarted)
+					if (ethState < EthState::started)
 #endif
 					{
 						uint8_t pChan;
@@ -1711,7 +1778,7 @@ void ProcessRequest()
 				StartClient(nullptr);						// connect to strongest known access point
 			}
 #if SUPPORT_ETHERNET
-			else if (!strcmp(reinterpret_cast<const char*>(transferBuffer), EthSSID))
+			else if (!strcmp(reinterpret_cast<const char*>(transferBuffer), ethSSID))
 			{
 				EthStartClient();
 			}
@@ -1738,9 +1805,9 @@ void ProcessRequest()
 				RemoveMdnsServices();
 				delay(20);									// try to give lwip time to recover from stopping everything
 #if SUPPORT_ETHERNET
-				if (EthStarted)
+				if (ethState >= EthState::started)
 				{
-					esp_eth_stop(EthHandle);
+					esp_eth_stop(ethHandle);
 				}
 				else
 #endif
@@ -1763,7 +1830,6 @@ void ProcessRequest()
 			{
 				delay(100);
 			}
-
 			usingDhcpc = false;
 			numWifiReconnects = 0;
 			currentSsid = -1;
@@ -1835,7 +1901,7 @@ void IRAM_ATTR TransferReadyIsr(void* p)
 void setup()
 {
 	mainTaskHdl = xTaskGetCurrentTaskHandle();
-debugPrintAlways("\r\nESP32 Starting setup\n");
+	debugPrintAlways("\r\nESP32 Starting setup\n");
 delay(1000);
 	// Setup Wi-Fi
 #pragma GCC diagnostic push
@@ -1859,7 +1925,6 @@ delay(1000);
 	wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
 	cfg.nvs_enable = false;
 	esp_wifi_init(&cfg);
-debugPrintAlways("Starting connPoll\n");
 	xTaskCreate(ConnectPoll, "connPoll", CONN_POLL_STACK, NULL, CONN_POLL_PRIO, &connPollTaskHdl);
 
 	esp_log_level_set("wifi", ESP_LOG_NONE);
@@ -1874,22 +1939,6 @@ debugPrintAlways("Starting connPoll\n");
 	gpio_set_direction(ProgramDisable, GPIO_MODE_OUTPUT);
 	gpio_set_level(ProgramDisable, 0);
 # endif
-debugPrint("Start eth init\n");
-    ESP_ERROR_CHECK(tcpip_adapter_set_default_eth_handlers());
-    ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, &HandleEthEvent, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &GotEthIP, NULL));
-debugPrintf("Current core is %x\n", xPortGetCoreID());
-    eth_mac_config_t mac_config = ETH_MAC_DEFAULT_CONFIG();
-    eth_phy_config_t phy_config = ETH_PHY_DEFAULT_CONFIG();
-    phy_config.phy_addr = 1;
-    phy_config.reset_gpio_num = 16;
-    mac_config.smi_mdc_gpio_num = 23;
-    mac_config.smi_mdio_gpio_num = 18;
-    esp_eth_mac_t *mac = esp_eth_mac_new_esp32(&mac_config);
-    esp_eth_phy_t *phy = esp_eth_phy_new_lan8720(&phy_config);
-debugPrint("Install driver\n");
-    esp_eth_config_t config = ETH_DEFAULT_CONFIG(mac, phy);
-    ESP_ERROR_CHECK(esp_eth_driver_install(&config, &EthHandle));
 #endif
 	// Set up SPI hardware and request handling
 	gpio_reset_pin(SamTfrReadyPin);
@@ -1902,7 +1951,6 @@ debugPrint("Install driver\n");
 	gpio_reset_pin(SamSSPin);
 	gpio_set_direction(SamSSPin, GPIO_MODE_OUTPUT);
 	gpio_set_level(SamSSPin, 1);
-debugPrintAlways("Init SPI\n");
 	hspi.InitMaster(SPI_MODE1, defaultClockControl, true);
 
 	gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
@@ -1914,7 +1962,6 @@ debugPrintAlways("Init SPI\n");
 			xTaskNotify(mainTaskHdl, TFR_REQUEST_TIMEOUT, eSetBits);
 		});
 	xTimerStart(tfrReqExpTmr, portMAX_DELAY);
-debugPrintAlways("Connection init\n");
 	// Setup networking
 	Connection::Init();
 
