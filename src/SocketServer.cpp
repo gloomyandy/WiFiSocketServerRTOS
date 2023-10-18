@@ -489,7 +489,9 @@ pre(currentState == WiFiState::idle)
 	WirelessConfigurationData wp;
 	esp_wifi_stop();
 
+#ifndef ESP8266
 	int8_t channel = -1;
+#endif
 
 	if (ssid == nullptr || ssid[0] == 0)
 	{
@@ -536,7 +538,9 @@ pre(currentState == WiFiState::idle)
 		if (strongestNetwork >= 0) {
 			SafeStrncpy(ssid, (const char*)ap_records[strongestNetwork].ssid,
 						std::min(sizeof(ssid), sizeof(ap_records[strongestNetwork].ssid)));
+#ifndef ESP8266
 			channel = ap_records[strongestNetwork].primary;
+#endif
 		}
 
 		free(ap_records);
@@ -568,6 +572,7 @@ pre(currentState == WiFiState::idle)
 	SafeStrncpy((char*)wifi_config.sta.ssid, (char*)wp.ssid,
 		std::min(sizeof(wifi_config.sta.ssid), sizeof(wp.ssid)));
 
+#ifndef ESP8266
 	if (channel >= 0 && channel <= 13)
 	{
 		wifi_config.sta.channel = channel;
@@ -576,6 +581,11 @@ pre(currentState == WiFiState::idle)
 	{
 		wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
 	}
+#else
+	// Workaround for ESP8266, which seems to ignore the channel argument,
+	// instead preferring to connect to the previously connected to channel.
+	wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+#endif
 
 	if (wp.eap.protocol == EAPProtocol::NONE)
 	{
