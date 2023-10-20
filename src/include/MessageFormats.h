@@ -90,7 +90,9 @@ struct MessageHeaderSamToEsp
 	static const uint8_t FlagPush = 0x02;
 };
 
-enum class EspWiFiPhyMode {
+const size_t headerDwords = NumDwords(sizeof(MessageHeaderSamToEsp));
+enum class EspWiFiPhyMode : uint8_t
+{
 	B = 1,
 	G = 2,
 	N = 3,
@@ -120,8 +122,6 @@ struct WiFiScanData
 	uint8_t spare[2];			// spare fore future use
 	char ssid[SsidLength + 1];
 };
-
-const size_t headerDwords = NumDwords(sizeof(MessageHeaderSamToEsp));
 
 // Message data sent from SAM to ESP for a connCreate, networkListen or networkStopListening command
 // For a networkStopListening command, only the port number is used
@@ -181,6 +181,7 @@ enum class AddEnterpriseSsidFlag : uint8_t
 	CANCEL,			// Cancel the storage
 };
 
+// Message data sent from SAM to ESP to add an SSID or set the access point configuration. This is also the format of a remembered SSID entry.
 struct WirelessConfigurationData
 {
 	uint32_t ip;					// IP address. 0 means use DHCP (only valid in client mode)
@@ -254,10 +255,10 @@ struct NetworkStatusResponse
 			zero1 : 4;				// unused, set to zero
 	uint8_t zero2;					// unused, set to zero
 	uint16_t vcc;					// ESP Vcc voltage according to its ADC
-	uint8_t macAddress[6];			// MAC address
-	char versionText[16];			// WiFi firmware version
-	char ssid[SsidLength];			// SSID of the router we are connected to, or our own SSDI
-	char hostName[64];				// name of the access point we are connected to, or our own access point name
+    uint8_t macAddress[6];			// MAC address
+	char versionText[16];			// WiFi firmware version, null terminated
+	char ssid[SsidLength];			// SSID of the router we are connected to, or our own SSID, null terminated
+	char hostName[64];				// name of the access point we are connected to, or our own access point name, null terminated
 	uint32_t clockReg;				// the SPI clock register
 
 	// Added at version 2.1
@@ -302,7 +303,6 @@ enum class ConnState : uint8_t
 	// The remaining states are not of interest to clients
 	closePending,		// close this socket when sending is complete
 	closeReady,			// other end has closed and we were already closePending
-
 	allocated
 };
 
