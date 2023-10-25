@@ -211,6 +211,7 @@ static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 			case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
 			case WIFI_REASON_AUTH_FAIL:
 			case WIFI_REASON_ASSOC_FAIL:
+			case WIFI_REASON_ASSOC_EXPIRE:
 			case WIFI_REASON_HANDSHAKE_TIMEOUT:
 			case WIFI_REASON_802_1X_AUTH_FAILED:
 				wifiEvt = STATION_WRONG_PASSWORD;
@@ -235,7 +236,7 @@ static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 
 		if (firstConnect)
 		{
-			if (disconnected->reason == WIFI_REASON_AUTH_EXPIRE)
+			if (wifiEvt == STATION_WRONG_PASSWORD)
 			{
 				firstConnectFailCnt++;
 			}
@@ -243,6 +244,9 @@ static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 			// The first connection attempt seems to emit two events. First one is for WIFI_REASON_AUTH_EXPIRE
 			// and the second is for WIFI_REASON_CONNECTION_FAIL. Change the second event
 			// to an authentication attempt error.
+			// GA Note: With an Archer C6 router I seem to get a WIFI_REASON_AUTH_FAIL, on a Google Pixel I get
+			// WIFI_REASON_ASSOC_EXPIRE, rather than WIFI_REASON_AUTH_EXPIRE. Rather than picking out
+			// individual reasons we simply use the anthing that we normally treat as an auth failure.
 			if (firstConnectFailCnt && disconnected->reason == WIFI_REASON_CONNECTION_FAIL)
 			{
 				wifiEvt = STATION_WRONG_PASSWORD;
