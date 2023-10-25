@@ -105,6 +105,14 @@ static const char* WIFI_EVENT_EXT = "wifi_event_ext";
 
 static WirelessConfigurationMgr *wirelessConfigMgr;
 
+// Workaround for https://github.com/espressif/esp-idf/issues/12315, remove once issue is fixed.
+// To summarize: Initial connection attempt on some access points fail when the
+// previous connection was not severed cleanly, for example when power is removed
+// suddenly or a board reset without calling M552 S0.
+static uint32_t firstConnectFailCnt = 0;
+static uint32_t firstConnectFailMax = 2;
+static bool firstConnect = true;
+
 typedef enum {
 	WIFI_IDLE = 0,
 	STATION_CONNECTING,
@@ -154,6 +162,11 @@ bool ValidSocketNumber(uint8_t num)
 	return false;
 }
 
+static inline bool isFirstConnectWorkaround()
+{
+	return firstConnect && (firstConnectFailCnt <= firstConnectFailMax);
+}
+
 static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 								int32_t event_id, void* event_data)
 {
@@ -197,6 +210,22 @@ static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 			// The disconnection was not triggered by an explicit disconnection command
 			// by RRF, and will cause reconnection attempts. Count them here.
 			numWifiReconnects++;
+		}
+
+		if (firstConnect)
+		{
+			if (disconnected->reason == WIFI_REASON_AUTH_EXPIRE)
+			{
+				firstConnectFailCnt++;
+			}
+
+			// The first connection attempt seems to emit two events. First one is for WIFI_REASON_AUTH_EXPIRE
+			// and the second is for WIFI_REASON_CONNECTION_FAIL. Change the second event
+			// to an authentication attempt error.
+			if (firstConnectFailCnt && disconnected->reason == WIFI_REASON_CONNECTION_FAIL)
+			{
+				wifiEvt = STATION_WRONG_PASSWORD;
+			}
 		}
 	} else if (event_base == WIFI_EVENT && (event_id == WIFI_EVENT_STA_STOP || event_id == WIFI_EVENT_AP_STOP)) {
 		wifiEvt = WIFI_IDLE;
@@ -310,7 +339,8 @@ void ConnectPoll(void* data)
 					break;
 
 				case STATION_WRONG_PASSWORD:
-					error = "Authentication failed";
+					retry = isFirstConnectWorkaround();
+					error = retry ? nullptr : "Authentication failed";
 					break;
 
 				case STATION_NO_AP_FOUND:
@@ -325,11 +355,11 @@ void ConnectPoll(void* data)
 
 				case STATION_GOT_IP:
 					xTimerStop(connExpTmr, portMAX_DELAY);
-					if (currentState == WiFiState::reconnecting)
+					if (currentState == WiFiState::reconnecting && !isFirstConnectWorkaround())
 					{
 						lastError = "Reconnect succeeded";
 					}
-
+					firstConnect = false;
 					debugPrint("Connected to AP\n");
 					currentState = WiFiState::connected;
 					break;
@@ -459,6 +489,10 @@ pre(currentState == WiFiState::idle)
 	WirelessConfigurationData wp;
 	esp_wifi_stop();
 
+#ifndef ESP8266
+	int8_t channel = -1;
+#endif
+
 	if (ssid == nullptr || ssid[0] == 0)
 	{
 		ConfigureSTAMode();
@@ -488,7 +522,10 @@ pre(currentState == WiFiState::idle)
 		int8_t strongestNetwork = -1;
 		for (int8_t i = 0; i < num_ssids; ++i)
 		{
-			debugPrintfAlways("found network %s\n", ap_records[i].ssid);
+			debugPrintfAlways("found network '%s' on channel=%d, rssi=%d mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
+								ap_records[i].ssid, ap_records[i].primary, ap_records[i].rssi,
+								ap_records[i].bssid[0], ap_records[i].bssid[1], ap_records[i].bssid[2],
+								ap_records[i].bssid[3], ap_records[i].bssid[4], ap_records[i].bssid[5]);
 			if (strongestNetwork < 0 || ap_records[i].rssi > ap_records[strongestNetwork].rssi)
 			{
 				WirelessConfigurationData temp;
@@ -504,6 +541,13 @@ pre(currentState == WiFiState::idle)
 		if (strongestNetwork >= 0) {
 			SafeStrncpy(ssid, (const char*)ap_records[strongestNetwork].ssid,
 						std::min(sizeof(ssid), sizeof(ap_records[strongestNetwork].ssid)));
+#ifndef ESP8266
+			channel = ap_records[strongestNetwork].primary;
+#endif
+			debugPrintfAlways("strongest known network '%s' on channel=%d, rssi=%d mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
+								ap_records[strongestNetwork].ssid, ap_records[strongestNetwork].primary, ap_records[strongestNetwork].rssi,
+								ap_records[strongestNetwork].bssid[0], ap_records[strongestNetwork].bssid[1], ap_records[strongestNetwork].bssid[2],
+								ap_records[strongestNetwork].bssid[3], ap_records[strongestNetwork].bssid[4], ap_records[strongestNetwork].bssid[5]);
 		}
 
 		free(ap_records);
@@ -534,6 +578,21 @@ pre(currentState == WiFiState::idle)
 	memset(&wifi_config, 0, sizeof(wifi_config));
 	SafeStrncpy((char*)wifi_config.sta.ssid, (char*)wp.ssid,
 		std::min(sizeof(wifi_config.sta.ssid), sizeof(wp.ssid)));
+
+#ifndef ESP8266
+	if (channel >= 0 && channel <= 13)
+	{
+		wifi_config.sta.channel = channel;
+	}
+	else
+	{
+		wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+	}
+#else
+	// Workaround for ESP8266, which seems to ignore the channel argument,
+	// instead preferring to connect to the previously connected to channel.
+	wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+#endif
 
 	if (wp.eap.protocol == EAPProtocol::NONE)
 	{
@@ -597,7 +656,10 @@ pre(currentState == WiFiState::idle)
 			esp_wifi_sta_wpa2_ent_set_username(base + offsets.asMemb.peapttls.identity, sizes.asMemb.peapttls.identity);
 			esp_wifi_sta_wpa2_ent_set_password(base + offsets.asMemb.peapttls.password, sizes.asMemb.peapttls.password);
 #ifndef ESP8266
-			esp_wifi_sta_wpa2_ent_set_ttls_phase2_method(ESP_EAP_TTLS_PHASE2_MSCHAPV2);
+			if (wp.eap.protocol == EAPProtocol::EAP_TTLS_MSCHAPV2)
+			{
+				esp_wifi_sta_wpa2_ent_set_ttls_phase2_method(ESP_EAP_TTLS_PHASE2_MSCHAPV2);
+			}
 #endif
 		}
 		else
@@ -707,10 +769,10 @@ void StartAccessPoint()
 		{
 			wifi_config_t wifi_config;
 			memset(&wifi_config, 0, sizeof(wifi_config));
-			SafeStrncpy((char*)wifi_config.sta.ssid, apData.ssid,
-				std::min(sizeof(wifi_config.sta.ssid), sizeof(apData.ssid)));
-			SafeStrncpy((char*)wifi_config.sta.password, (char*)apData.password,
-				std::min(sizeof(wifi_config.sta.password), sizeof(apData.password)));
+			SafeStrncpy((char*)wifi_config.ap.ssid, apData.ssid,
+				std::min(sizeof(wifi_config.ap.ssid), sizeof(apData.ssid)));
+			SafeStrncpy((char*)wifi_config.ap.password, (char*)apData.password,
+				std::min(sizeof(wifi_config.ap.password), sizeof(apData.password)));
 			wifi_config.ap.authmode = WIFI_AUTH_WPA_WPA2_PSK;
 			wifi_config.ap.channel = (apData.channel == 0) ? DefaultWiFiChannel : apData.channel;
 			wifi_config.ap.max_connection = MaxAPConnections;
