@@ -479,7 +479,6 @@ void ConnectPoll(void* data)
 			} else {
 				new_blink = ONBOARD_LED_IDLE;
 			}
-debugPrintf("Set led state %x\n", new_blink);
 			led_indicator_stop(led, ONBOARD_LED_IDLE);
 			led_indicator_stop(led, ONBOARD_LED_CONNECTING);
 			led_indicator_stop(led, ONBOARD_LED_CONNECTED);
@@ -1919,7 +1918,6 @@ void setup()
 	led = led_indicator_create(OnboardLedPin, &ledCfg);
 	led_indicator_start(led, ONBOARD_LED_RESET);
 
-delay(1000);
 	// Setup Wi-Fi
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
