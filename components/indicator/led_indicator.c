@@ -110,11 +110,18 @@ static const blink_step_t provisioned[] = {
     {LED_BLINK_STOP, 0, 0},
 };
 
+static const blink_step_t input_output[] = {
+    {LED_BLINK_HOLD, LED_STATE_OFF, 50},
+    {LED_BLINK_HOLD, LED_STATE_ON, 50},
+    {LED_BLINK_STOP, 0, 0},
+};
+
 /**
  * @brief led indicator blink lists, the index like BLINK_FACTORY_RESET defined the priority of the blink
  * 
  */
 blink_step_t const * led_indicator_blink_lists[] = {
+    [BLINK_IO] = input_output,
     [BLINK_FACTORY_RESET] = factory_reset,
     [BLINK_UPDATING] = updating,
     [BLINK_CONNECTED] = connected,
@@ -420,6 +427,9 @@ esp_err_t led_indicator_start(led_indicator_handle_t handle, led_indicator_blink
     LED_INDICATOR_CHECK(handle != NULL && blink_type >= 0 && blink_type < BLINK_MAX, "invalid p_handle", ESP_ERR_INVALID_ARG);
     LED_INDICATOR_CHECK(led_indicator_blink_lists[blink_type] != NULL, "undefined blink_type", ESP_ERR_INVALID_ARG);
     _led_indicator_t *p_led_indicator = (_led_indicator_t *)handle;
+    if (p_led_indicator->p_blink_steps[blink_type] != LED_BLINK_STOP) {
+        return ESP_OK;
+    }
     xSemaphoreTake(p_led_indicator->mutex, portMAX_DELAY);
     p_led_indicator->p_blink_steps[blink_type] = 0;
     _blink_list_switch(p_led_indicator);

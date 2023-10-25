@@ -78,6 +78,7 @@ typedef struct {
  * eg. BLINK_FACTORY_RESET priority is higher than BLINK_UPDATING
  */
 typedef enum {
+    BLINK_IO,
     BLINK_FACTORY_RESET,           /**< restoring factory settings */
     BLINK_UPDATING,                /**< updating software */ 
     BLINK_CONNECTED,               /**< connected to AP (or Cloud) succeed */
