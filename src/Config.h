@@ -49,6 +49,7 @@ const gpio_num_t SamSSPin = GPIO_NUM_15;
 const gpio_num_t EspReqTransferPin = GPIO_NUM_0;
 const gpio_num_t SamTfrReadyPin = GPIO_NUM_4;
 const gpio_num_t OnboardLedPin = GPIO_NUM_2;
+const bool LedOffLevel = true;
 #else
 
 #if CONFIG_IDF_TARGET_ESP32C3
@@ -56,10 +57,12 @@ const gpio_num_t SamSSPin = GPIO_NUM_7;
 const gpio_num_t EspReqTransferPin = GPIO_NUM_9;
 const gpio_num_t SamTfrReadyPin = GPIO_NUM_10;
 const gpio_num_t OnboardLedPin = GPIO_NUM_8;
+const bool LedOffLevel = true;
 #elif CONFIG_IDF_TARGET_ESP32S3
 const gpio_num_t SamSSPin = GPIO_NUM_10;
 const gpio_num_t EspReqTransferPin = GPIO_NUM_0;
 const gpio_num_t SamTfrReadyPin = GPIO_NUM_8;
+const bool LedOffLevel = true;
 const gpio_num_t OnboardLedPin = GPIO_NUM_6;
 #elif CONFIG_IDF_TARGET_ESP32
 # if SUPPORT_ETHERNET
@@ -73,11 +76,13 @@ const gpio_num_t EspReqTransferPin = GPIO_NUM_0;
 #  endif
 const gpio_num_t SamSSPin = GPIO_NUM_2;
 const gpio_num_t SamTfrReadyPin = GPIO_NUM_5;
+const bool LedOffLevel = true;
 # else
 const gpio_num_t SamSSPin = GPIO_NUM_5;
 const gpio_num_t EspReqTransferPin = GPIO_NUM_0;
 const gpio_num_t SamTfrReadyPin = GPIO_NUM_4;
 const gpio_num_t OnboardLedPin = GPIO_NUM_32;
+const bool LedOffLevel = false;
 # endif
 #else
 #error "pins not specifed for target chip"

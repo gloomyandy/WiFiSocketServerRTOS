@@ -113,6 +113,13 @@ static const char* WIFI_EVENT_EXT = "wifi_event_ext";
 
 static WirelessConfigurationMgr *wirelessConfigMgr;
 
+static led_indicator_handle_t led;
+constexpr led_indicator_blink_type_t ONBOARD_LED_RESET = BLINK_FACTORY_RESET;
+constexpr led_indicator_blink_type_t ONBOARD_LED_IO = BLINK_IO;
+constexpr led_indicator_blink_type_t ONBOARD_LED_CONNECTING = BLINK_PROVISIONING;
+constexpr led_indicator_blink_type_t ONBOARD_LED_CONNECTED = BLINK_CONNECTED;
+constexpr led_indicator_blink_type_t ONBOARD_LED_IDLE = BLINK_PROVISIONED;
+
 #if SUPPORT_ETHERNET
 enum class EthState : uint8_t
 {
@@ -286,15 +293,6 @@ void ConnectToAccessPoint()
 
 void ConnectPoll(void* data)
 {
-	constexpr led_indicator_blink_type_t ONBOARD_LED_CONNECTING = BLINK_PROVISIONING;
-	constexpr led_indicator_blink_type_t ONBOARD_LED_CONNECTED = BLINK_CONNECTED;
-	constexpr led_indicator_blink_type_t ONBOARD_LED_IDLE = BLINK_PROVISIONED;
-
-	led_indicator_config_t cfg;
-	cfg.off_level = 1;	// active low
-	cfg.mode = LED_GPIO_MODE;
-
-	led_indicator_handle_t led = led_indicator_create(OnboardLedPin, &cfg);
 	led_indicator_start(led, ONBOARD_LED_IDLE);
 
 	TimerHandle_t connExpTmr = xTimerCreate("connExpTmr", MaxConnectTime, pdFALSE, NULL,
@@ -481,7 +479,7 @@ void ConnectPoll(void* data)
 			} else {
 				new_blink = ONBOARD_LED_IDLE;
 			}
-
+debugPrintf("Set led state %x\n", new_blink);
 			led_indicator_stop(led, ONBOARD_LED_IDLE);
 			led_indicator_stop(led, ONBOARD_LED_CONNECTING);
 			led_indicator_stop(led, ONBOARD_LED_CONNECTED);
@@ -855,6 +853,9 @@ static void HandleEthEvent(void *arg, esp_event_base_t event_base,
 		debugPrint("Ethernet Stopped\n");
 		ethState = EthState::idle;
 		currentState = WiFiState::idle;
+		led_indicator_stop(led, ONBOARD_LED_CONNECTED);
+		led_indicator_stop(led, ONBOARD_LED_CONNECTING);
+		led_indicator_start(led, ONBOARD_LED_IDLE);
 		break;
 	default:
 		break;
@@ -876,6 +877,9 @@ static void GotEthIP(void *arg, esp_event_base_t event_base,
 	debugPrint("~~~~~~~~~~~\n");
 	currentState = WiFiState::connected;
 	xTaskNotify(mainTaskHdl, TFR_REQUEST, eSetBits);
+	led_indicator_stop(led, ONBOARD_LED_IDLE);
+	led_indicator_stop(led, ONBOARD_LED_CONNECTING);
+	led_indicator_start(led, ONBOARD_LED_CONNECTED);
 }
 
 void EthInit()
@@ -902,6 +906,9 @@ void EthInit()
 void EthStartClient()
 pre(currentState == WiFiState::idle)
 {
+	led_indicator_stop(led, ONBOARD_LED_IDLE);
+	led_indicator_start(led, ONBOARD_LED_CONNECTING);
+	debugPrint("Starting ethernet\n");
 	if (ethState == EthState::disabled)
 	{
 		EthInit();
@@ -935,6 +942,7 @@ pre(currentState == WiFiState::idle)
 	}
 	ESP_ERROR_CHECK(esp_eth_start(ethHandle));
 	mdns_init();
+	debugPrint("Ethernet start complete\n");
 }
 
 #endif
@@ -1662,6 +1670,7 @@ void ProcessRequest()
 				const size_t amount = conn.Read(reinterpret_cast<uint8_t *>(transferBuffer), std::min<size_t>(messageHeaderIn.hdr.dataBufferAvailable, MaxDataLength));
 				messageHeaderIn.hdr.param32 = hspi.transfer32(amount);
 				hspi.transferDwords(transferBuffer, nullptr, NumDwords(amount));
+				led_indicator_start(led, ONBOARD_LED_IO);
 			}
 			else
 			{
@@ -1684,6 +1693,7 @@ void ProcessRequest()
 				{
 					lastError = "incomplete write";
 				}
+				led_indicator_start(led, ONBOARD_LED_IO);
 			}
 			else
 			{
@@ -1902,6 +1912,13 @@ void setup()
 {
 	mainTaskHdl = xTaskGetCurrentTaskHandle();
 	debugPrintAlways("\r\nESP32 Starting setup\n");
+	led_indicator_config_t ledCfg;
+	ledCfg.off_level = LedOffLevel;
+	ledCfg.mode = LED_GPIO_MODE;
+
+	led = led_indicator_create(OnboardLedPin, &ledCfg);
+	led_indicator_start(led, ONBOARD_LED_RESET);
+
 delay(1000);
 	// Setup Wi-Fi
 #pragma GCC diagnostic push
@@ -1968,6 +1985,8 @@ delay(1000);
 	lastError = nullptr;
 	debugPrintAlways("Init completed\n");
 	gpio_set_level(EspReqTransferPin, 1);					// tell the SAM we are ready to receive a command
+	led_indicator_stop(led, ONBOARD_LED_RESET);
+	led_indicator_start(led, ONBOARD_LED_IDLE);
 }
 
 void loop()
