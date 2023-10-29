@@ -24,7 +24,9 @@ extern "C"
 #include "freertos/event_groups.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
+#if SUPPORT_ETHERNET
 #include "esp_eth.h"
+#endif
 #include "esp_event.h"
 #include "esp_system.h"
 #include "esp_attr.h"
@@ -1944,7 +1946,7 @@ void IRAM_ATTR TransferReadyIsr(void* p)
 void setup()
 {
 	mainTaskHdl = xTaskGetCurrentTaskHandle();
-	debugPrintAlways("\r\nESP32 Starting setup\n");
+	debugPrintAlways("\r\nESP Starting setup\n");
 	led_indicator_config_t ledCfg;
 	ledCfg.off_level = LedOffLevel;
 	ledCfg.mode = LED_GPIO_MODE;
