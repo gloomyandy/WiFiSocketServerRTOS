@@ -37,7 +37,6 @@ const uint32_t maxSpiFileData = 2048;
 
 // The SAM occasionally transmits incorrect data at 40MHz, so we now use 26.7MHz.
 // Due to the 15ns SCLK to MISO delay of the SAMD51, 2:1 is preferred over 1:2
-const uint32_t defaultClockControl = 0x2003;		// 80MHz/4, mark:space 2:1
 
 // Pin numbers
 // SamSSPin - output to SAM, SS pin for SPI transfer
@@ -50,6 +49,7 @@ const gpio_num_t EspReqTransferPin = GPIO_NUM_0;
 const gpio_num_t SamTfrReadyPin = GPIO_NUM_4;
 const gpio_num_t OnboardLedPin = GPIO_NUM_2;
 const bool LedOffLevel = true;
+const uint32_t defaultClockControl = 0x2002;		// 80MHz/3, mark:space 2:1
 #else
 
 #if CONFIG_IDF_TARGET_ESP32C3
@@ -58,12 +58,14 @@ const gpio_num_t EspReqTransferPin = GPIO_NUM_9;
 const gpio_num_t SamTfrReadyPin = GPIO_NUM_10;
 const gpio_num_t OnboardLedPin = GPIO_NUM_8;
 const bool LedOffLevel = true;
+const uint32_t defaultClockControl = 0x2002;		// 80MHz/3, mark:space 2:1
 #elif CONFIG_IDF_TARGET_ESP32S3
 const gpio_num_t SamSSPin = GPIO_NUM_10;
 const gpio_num_t EspReqTransferPin = GPIO_NUM_0;
 const gpio_num_t SamTfrReadyPin = GPIO_NUM_8;
 const bool LedOffLevel = true;
 const gpio_num_t OnboardLedPin = GPIO_NUM_6;
+const uint32_t defaultClockControl = 0x2002;		// 80MHz/3, mark:space 2:1
 #elif CONFIG_IDF_TARGET_ESP32
 # if SUPPORT_ETHERNET
 #  if ETH_V0
@@ -77,12 +79,14 @@ const gpio_num_t EspReqTransferPin = GPIO_NUM_0;
 const gpio_num_t SamSSPin = GPIO_NUM_2;
 const gpio_num_t SamTfrReadyPin = GPIO_NUM_5;
 const bool LedOffLevel = true;
+const uint32_t defaultClockControl = 0x2003;		// 80MHz/4, mark:space 2:1
 # else
 const gpio_num_t SamSSPin = GPIO_NUM_5;
 const gpio_num_t EspReqTransferPin = GPIO_NUM_0;
 const gpio_num_t SamTfrReadyPin = GPIO_NUM_4;
 const gpio_num_t OnboardLedPin = GPIO_NUM_32;
 const bool LedOffLevel = false;
+const uint32_t defaultClockControl = 0x2003;		// 80MHz/4, mark:space 2:1
 # endif
 #else
 #error "pins not specifed for target chip"
