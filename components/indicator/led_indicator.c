@@ -86,8 +86,8 @@ static const blink_step_t updating[] = {
  * 
  */
 static const blink_step_t factory_reset[] = {
-    {LED_BLINK_HOLD, LED_STATE_ON, 200},
-    {LED_BLINK_HOLD, LED_STATE_OFF, 200},
+    {LED_BLINK_HOLD, LED_STATE_ON, 50},
+    {LED_BLINK_HOLD, LED_STATE_OFF, 50},
     {LED_BLINK_LOOP, 0, 0},
 };
 
