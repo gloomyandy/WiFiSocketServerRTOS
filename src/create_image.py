@@ -44,12 +44,14 @@ else:
                 bins.append(bin)
             except:
                 pass
+    bins.sort(key=lambda b: b["offset"])
 
 with open(args.output, 'wb') as imgfile:
     pos = 0
     img = b''
 
     for b in bins:
+        print("file: ", b["file"], " offset: ", b["offset"])
         fill = b["offset"] - pos
         img += b'\xFF' * fill
 
