@@ -172,6 +172,8 @@ static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 {
 	wifi_evt_t wifiEvt = WIFI_IDLE;
 
+	debugPrintf("wifi evt: %s id: %d\n", event_base, event_id);
+
 	if (event_base == WIFI_EVENT_EXT && event_id == WIFI_EVENT_STA_CONNECTING) {
 		wifiEvt = STATION_CONNECTING;
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED) {
@@ -184,6 +186,7 @@ static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 		return;
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
 		wifi_event_sta_disconnected_t* disconnected = (wifi_event_sta_disconnected_t*) event_data;
+		debugPrintf("disconnect reason: %d\n", disconnected->reason);
 		switch (disconnected->reason) {
 			// include authentication failures in general
 			case WIFI_REASON_AUTH_EXPIRE:
