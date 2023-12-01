@@ -1,0 +1,10 @@
+{
+    "folders": [
+        {
+            "path": "."
+        },
+        {
+            "path": "../ESP8266_RTOS_SDK"
+        }
+    ]
+}
