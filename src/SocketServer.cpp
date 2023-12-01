@@ -109,9 +109,7 @@ static WirelessConfigurationMgr *wirelessConfigMgr;
 // To summarize: Initial connection attempt on some access points fail when the
 // previous connection was not severed cleanly, for example when power is removed
 // suddenly or a board reset without calling M552 S0.
-static uint32_t firstConnectFailCnt = 0;
-static uint32_t firstConnectFailMax = 2;
-static bool firstConnect = true;
+static int firstConnectWorkaroundStage= 0;
 
 typedef enum {
 	WIFI_IDLE = 0,
@@ -164,13 +162,15 @@ bool ValidSocketNumber(uint8_t num)
 
 static inline bool isFirstConnectWorkaround()
 {
-	return firstConnect && (firstConnectFailCnt <= firstConnectFailMax);
+	return firstConnectWorkaroundStage == 1 || firstConnectWorkaroundStage == 2;
 }
 
 static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 								int32_t event_id, void* event_data)
 {
 	wifi_evt_t wifiEvt = WIFI_IDLE;
+
+	debugPrintf("wifi evt: %s id: %d\n", event_base, event_id);
 
 	if (event_base == WIFI_EVENT_EXT && event_id == WIFI_EVENT_STA_CONNECTING) {
 		wifiEvt = STATION_CONNECTING;
@@ -181,15 +181,23 @@ static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 			tcpip_adapter_dhcpc_stop(TCPIP_ADAPTER_IF_STA);
 			tcpip_adapter_set_ip_info(TCPIP_ADAPTER_IF_STA, &staIpInfo);
 		}
+		// Disable the first connect workaround.
+		if (firstConnectWorkaroundStage != 3) // Not previously disabled.
+		{
+			firstConnectWorkaroundStage = 3;
+			debugPrint("first connect workaround disabled due to connect success\n");
+		}
 		return;
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
 		wifi_event_sta_disconnected_t* disconnected = (wifi_event_sta_disconnected_t*) event_data;
+		debugPrintf("disconnect reason: %d\n", disconnected->reason);
 		switch (disconnected->reason) {
 			// include authentication failures in general
 			case WIFI_REASON_AUTH_EXPIRE:
 			case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
 			case WIFI_REASON_AUTH_FAIL:
 			case WIFI_REASON_ASSOC_FAIL:
+			case WIFI_REASON_ASSOC_EXPIRE:
 			case WIFI_REASON_HANDSHAKE_TIMEOUT:
 			case WIFI_REASON_802_1X_AUTH_FAILED:
 				wifiEvt = STATION_WRONG_PASSWORD;
@@ -212,21 +220,73 @@ static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 			numWifiReconnects++;
 		}
 
-		if (firstConnect)
+		// The workaround has following stages:
+		// 	0 - before first connection attempt
+		// 	1 - first disconnect code
+		// 	2 - second disconnect code
+		// 	3 - workaround disabled
+		// The goal is to get to 3, which is when the workaround is disabled.
+		switch (firstConnectWorkaroundStage)
 		{
-			if (disconnected->reason == WIFI_REASON_AUTH_EXPIRE)
+		case 0:
+			if (wifiEvt == STATION_WRONG_PASSWORD)
 			{
-				firstConnectFailCnt++;
+				// 0 -> 1
+				// On our first connect failure, check for the disconnect code that triggers workaround.
+				// Different codes might be emitted, depending on access point:
+				//  - WIFI_REASON_AUTH_EXPIRE (RPi, reported by rechrtb)
+				//  - WIFI_REASON_ASSOC_FAIL (RPi, reported by rechrtb)
+				//  - WIFI_REASON_AUTH_FAIL (TP-LINK Archer C6, reported by gloomyandy)
+				//  - WIFI_REASON_ASSOC_EXPIRE (Google Pixel, reported by gloomyandy)
+				// To be safe, the all disconnect code under STATION_WRONG_PASSWORD triggers this workaround.
+				// This should trigger another connection attempt.
+				firstConnectWorkaroundStage = 1;
+				debugPrint("first connect workaround 1st stage\n");
 			}
-
-			// The first connection attempt seems to emit two events. First one is for WIFI_REASON_AUTH_EXPIRE
-			// and the second is for WIFI_REASON_CONNECTION_FAIL. Change the second event
-			// to an authentication attempt error.
-			if (firstConnectFailCnt && disconnected->reason == WIFI_REASON_CONNECTION_FAIL)
+			else
 			{
+				// 0 -> 3
+				// First connect workaround is not applicable due to different disconnect code.
+				firstConnectWorkaroundStage = 3;
+				debugPrint("first connect workaround disabled at stage 0\n");
+			}
+			break;
+		case 1:
+			if (disconnected->reason == WIFI_REASON_CONNECTION_FAIL)
+			{
+				// 1 -> 2
+				// The connection attempt from stage 1 should fail with WIFI_REASON_CONNECTION_FAIL.
+				// This should trigger another connection attempt.
+				firstConnectWorkaroundStage = 2;
 				wifiEvt = STATION_WRONG_PASSWORD;
+				debugPrint("first connect workaround 2nd stage\n");
 			}
+			else
+			{
+				// 1 -> 3
+				// The disconnect code is not what is expected for the workaround 2nd stage.
+				// Disable workaround and let connection attempt fail with the original disconnect reason.
+				firstConnectWorkaroundStage = 3;
+				debugPrint("first connect workaround disabled at stage 1\n");
+			}
+			break;
+
+		case 2:
+			// 2 -> 3
+		 	// Connection attempt at stage 2 fails.
+			// Disable workaround and let connection attempt fail with the original disconnect reason.
+			debugPrint("first connect workaround 2nd stage failed\n");
+			firstConnectWorkaroundStage = 3;
+			break;
+
+		case 3:
+			// Do nothing. Workaround is already disabled.
+			break;
+
+		default:
+			break;
 		}
+
 	} else if (event_base == WIFI_EVENT && (event_id == WIFI_EVENT_STA_STOP || event_id == WIFI_EVENT_AP_STOP)) {
 		wifiEvt = WIFI_IDLE;
 	} else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
@@ -355,11 +415,10 @@ void ConnectPoll(void* data)
 
 				case STATION_GOT_IP:
 					xTimerStop(connExpTmr, portMAX_DELAY);
-					if (currentState == WiFiState::reconnecting && !isFirstConnectWorkaround())
+					if (currentState == WiFiState::reconnecting)
 					{
 						lastError = "Reconnect succeeded";
 					}
-					firstConnect = false;
 					debugPrint("Connected to AP\n");
 					currentState = WiFiState::connected;
 					break;
@@ -447,7 +506,7 @@ void ConnectPoll(void* data)
 		{
 			WirelessConfigurationData wp;
 			wirelessConfigMgr->GetSsid(currentSsid, wp);
-			currentState = WiFiState::reconnecting;
+			currentState = isFirstConnectWorkaround() ? WiFiState::connecting : WiFiState::reconnecting;
 			debugPrintf("Trying to reconnect to ssid \"%s\" with password \"%s\"\n", wp.ssid, wp.password);
 			ConnectToAccessPoint();
 		}
