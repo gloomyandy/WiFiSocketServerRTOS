@@ -31,7 +31,7 @@ if(IDF_TARGET STREQUAL "esp8266")
 else()
     string(REPLACE "esp" "" chip "${IDF_TARGET}")
     string(TOUPPER "${chip}" chip)
-    set(bin "DuetWiFiServer_${chip}.bin")
+    set(bin "DuetWiFiModule_${chip}.bin")
 endif()
 
 add_custom_target(image ALL DEPENDS app bootloader
