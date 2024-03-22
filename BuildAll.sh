@@ -28,8 +28,8 @@ set MSYS2=
 ..\esp-idf\export.bat
 idf.py -DSUPPORT_ETHERNET=1 set-target esp32 build
 EOFXXX
-if [ -f ./build/DuetWiFiServer_32.bin ]; then
-	mv ./build/DuetWiFiServer_32.bin ${OUTPUT}/DuetWiFiServer_eth-${VER}.bin
+if [ -f ./build/DuetWiFiModule_32.bin ]; then
+	mv ./build/DuetWiFiModule_32.bin ${OUTPUT}/DuetWiFiModule_eth-${VER}.bin
 fi 
 
 rm -f sdkconfig
@@ -40,7 +40,7 @@ set MSYS2=
 ..\esp-idf\export.bat
 idf.py set-target esp32 build
 EOFXXX
-if [ -f ./build/DuetWiFiServer_32.bin ]; then
-	mv ./build/DuetWiFiServer_32.bin ${OUTPUT}/DuetWiFiServer_32-${VER}.bin
+if [ -f ./build/DuetWiFiModule_32.bin ]; then
+	mv ./build/DuetWiFiModule_32.bin ${OUTPUT}/DuetWiFiModule_32-${VER}.bin
 fi 
 
