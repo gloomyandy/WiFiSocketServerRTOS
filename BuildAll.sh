@@ -17,7 +17,7 @@ set MSYS2=
 \\msys32\\usr\\bin\\bash.exe build8266.sh
 EOFXXX
 if [ -f ./build/DuetWiFiServer.bin ]; then
-	mv ./build/DuetWiFiServer.bin ${OUTPUT}/DuetWiFiServer-${VER}.bin
+	mv ./build/DuetWiFiServer.bin ${OUTPUT}/WiFiModule_esp8266.bin
 fi 
 
 rm -f sdkconfig
@@ -29,7 +29,7 @@ set MSYS2=
 idf.py -DSUPPORT_ETHERNET=1 set-target esp32 build
 EOFXXX
 if [ -f ./build/DuetWiFiModule_32.bin ]; then
-	mv ./build/DuetWiFiModule_32.bin ${OUTPUT}/DuetWiFiModule_eth-${VER}.bin
+	mv ./build/DuetWiFiModule_32.bin ${OUTPUT}/WiFiModule_esp32eth.bin
 fi 
 
 rm -f sdkconfig
@@ -41,6 +41,6 @@ set MSYS2=
 idf.py set-target esp32 build
 EOFXXX
 if [ -f ./build/DuetWiFiModule_32.bin ]; then
-	mv ./build/DuetWiFiModule_32.bin ${OUTPUT}/DuetWiFiModule_32-${VER}.bin
+	mv ./build/DuetWiFiModule_32.bin ${OUTPUT}/WiFiModule_esp32.bin
 fi 
 
