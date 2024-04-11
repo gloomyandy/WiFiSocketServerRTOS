@@ -2,9 +2,10 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <new>
 #include <sys/fcntl.h>
 #include <sys/unistd.h>
-
+#include "nvs_flash.h"
 #include "esp_spiffs.h"
 
 #include "Config.h"
@@ -19,19 +20,114 @@ extern esp_rom_spiflash_chip_t g_rom_flashchip;
 
 WirelessConfigurationMgr* WirelessConfigurationMgr::instance = nullptr;
 
+
+// Check to see if we have any existing credentials stored in flash from a previous version of the
+// the firmware. Note that we need to do this before making any changes to flash as the flash areas
+// used may overlap. If what looks like valid credentials are found we return a pointer to an 
+// allocated area of RAM containing the information. If no credentials are found we return nullptr.
+// These checks are only valid for the STM32 1.x ports of the WiFi firmware, they will not work for the
+// Duet3D versions.
 #if ESP8266
 static uint32_t getOldSSIDStorageOffset()
 {
-	uint32_t offset = 0x3FB000;
-
-	if (g_rom_flashchip.chip_size == 0x200000)
-	{
-		offset = 0x1FB000;
-	}
-
-	return offset;
+	return 0x3FA000;
 }
 #endif
+
+static uint8_t* GetAnyOldConfigData()
+{
+	esp_err_t err = ESP_OK;
+#if ESP8266
+	const uint32_t oldDataSize = (MaxRememberedNetworks+1)*sizeof(WirelessConfigurationData);
+	uint8_t *oldData = new (std::nothrow) uint8_t[oldDataSize];
+	if (oldData == nullptr)
+	{
+		debugPrintf("Failed to allocate %d bytes for old data storage\n", oldDataSize);
+		return nullptr;
+	}
+	// the ESP8266 1.x version stores the credentials using the Arduino EEPROM class. This
+	// uses the Flash memory located at _EEPROM_start which resolves to offset 0x3fA000.
+	uint32_t offset = getOldSSIDStorageOffset();
+	err = spi_flash_read(offset, oldData, oldDataSize);
+	if (err != ESP_OK)
+	{
+		debugPrintf("Failed to load old data from offset %x len %d\n", offset, oldDataSize);
+	}
+#else
+	// The esp32 1.x code stores the data using the esp sdk EEPROM class this stores the data in a single blob
+	// in a partition called "nvs2", This partition is located at flash offset 0x3f0000. Unfortunately this
+	// location is in the middle of the kvs spiffs area used by 2.x. The following code fools the system into allowing
+	// access to this location as an nvs partition. NOTE: this code requires a slightly modified (fixed) version
+	// of nvs_flash_init_partition_ptr. It may not work with future SDK updates.
+	const esp_partition_t* kvsPartition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "kvs");
+	if (kvsPartition == nullptr)
+	{
+		debugPrint("Failed to find kvs partition\n");
+		return nullptr;
+	}
+	esp_partition_t nvsPartition = *kvsPartition;
+	debugPrintf("partition address %x size %x\n", kvsPartition->address, kvsPartition->size);
+	// adjust the location and size information to match the old nvs2 location
+	nvsPartition.address = 0x3f0000;
+	nvsPartition.size = 0x6000;
+	nvs_handle_t nvsHandle;
+	err = nvs_flash_init_partition_ptr(&nvsPartition);
+	if (err != ESP_OK)
+	{
+		debugPrintf("init partion failed %d\n", err);
+		return nullptr;
+	} 
+	err = nvs_open_from_partition("kvs", "eeprom", NVS_READONLY, &nvsHandle);
+	if (err != ESP_OK)
+	{
+		debugPrintf("open partion failed %d\n", err);
+		return nullptr;
+	}
+  	size_t oldDataSize = 0;
+  	err = nvs_get_blob(nvsHandle, "eeprom", NULL, &oldDataSize);
+	if (err != ESP_OK)
+	{
+  		debugPrintf("get blob returns %x\n", err);
+		return nullptr;
+	}
+	debugPrintf("Key size is %d\n", oldDataSize);
+	uint8_t *oldData = new (std::nothrow) uint8_t[oldDataSize];
+	if (oldData == nullptr)
+	{
+		debugPrintf("Failed to allocate %d bytes for old data storage\n", oldDataSize);
+		return nullptr;
+	}
+  	err = nvs_get_blob(nvsHandle, "eeprom", oldData, &oldDataSize);
+  	debugPrintf("loaded %d bytes error %x\n", oldDataSize, err);
+#endif
+	if (oldDataSize < MaxRememberedNetworks*sizeof(WirelessConfigurationData))
+	{
+		debugPrintf("Error old data area is smaller than expected %d/%d\n", oldDataSize, MaxRememberedNetworks*sizeof(WirelessConfigurationData));
+	}
+	if (err == ESP_OK && oldDataSize >= MaxRememberedNetworks*sizeof(WirelessConfigurationData))
+	{
+		debugPrintf("Checking for saved credentials %d entries\n", MaxRememberedNetworks);
+		// check to see if we have any valid entries
+		uint32_t oldSsidCnt = 0;
+		for (int ssid = MaxRememberedNetworks; ssid >= 0; ssid--)
+		{
+			WirelessConfigurationData *temp = (WirelessConfigurationData *) oldData + ssid;
+			if (temp->ssid[0] != 0xFF && temp->password[0] != 0xFF)
+			{
+				debugPrintf("Found SSID %s password %s\n", temp->ssid, temp->password);
+				oldSsidCnt++;
+			}
+		}
+		if (oldSsidCnt > 0)
+		{
+			debugPrintf("Found %d old credentials\n", oldSsidCnt);
+			return oldData;
+		}
+	}
+	// no valid data found
+	delete oldData;
+	return nullptr;
+}
 
 static inline uint32_t round2SecSz(uint32_t val)
 {
@@ -58,6 +154,8 @@ void WirelessConfigurationMgr::Init()
 	// 		- scratch - stores some values related to the scratch partition, with key/path 'scratch/ss' where
 	// 					ss is the string id
 	//
+	uint8_t* oldConfigData = GetAnyOldConfigData();
+
 	esp_vfs_spiffs_conf_t conf = {
 		.base_path = KVS_PATH,
 		.partition_label = NULL,
@@ -65,11 +163,16 @@ void WirelessConfigurationMgr::Init()
 		.format_if_mount_failed = true
 	};
 
-	esp_vfs_spiffs_register(&conf);
+	esp_err_t err = esp_vfs_spiffs_register(&conf);
+	if (err != ESP_OK)
+	{
+		debugPrintf("spiffs register returns %x\n", err);
+	}
 
 	// Memory map the partition, remembering the base pointer for the lifetime of the app.
 	spi_flash_mmap_handle_t mapHandle;
 	scratchPartition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, SCRATCH_DIR);
+
 	esp_partition_mmap(scratchPartition, 0, scratchPartition->size, SPI_FLASH_MMAP_DATA,
 						reinterpret_cast<const void**>(&scratchBase), &mapHandle);
 
@@ -77,34 +180,35 @@ void WirelessConfigurationMgr::Init()
 
 	// Check if first time and the storage should be initialized. The marker here is SSID slot 0,
 	// since WirelessConfigurationMgr::Reset works it's way backwards to it.
-	if (!GetKV(GetSsidKey(key, 0), nullptr, 0))
+	if (!GetKV(GetSsidKey(key, 0), nullptr, 0) || (oldConfigData != nullptr))
 	{
 		debugPrint("initializing SSID storage...\n");
-		Reset();
+		Reset(true);
 
-#if ESP8266
-		uint32_t offset = getOldSSIDStorageOffset();
-
-		int oldSsidCnt = 0;
-
-		for (int ssid = MaxRememberedNetworks; ssid >= 0; ssid--)
+		if (oldConfigData != nullptr)
 		{
-			WirelessConfigurationData temp;
-			spi_flash_read(offset + (ssid * sizeof(temp)), &temp, sizeof(temp));
-
-			if (temp.ssid[0] != 0xFF)
+			uint32_t oldSsidCnt = 0;
+			for (int ssid = MaxRememberedNetworks; ssid >= 0; ssid--)
 			{
-				SetSsidData(ssid, temp);
-				oldSsidCnt++;
+				WirelessConfigurationData *temp = (WirelessConfigurationData *) oldConfigData + ssid;
+				if (temp->ssid[0] != 0xFF && temp->password[0] != 0xFF)
+				{
+					debugPrintf("Found SSID %s password %s\n", temp->ssid, temp->password);
+					SetSsidData(ssid, *temp);
+					oldSsidCnt++;
+				}
 			}
+			debugPrintf("restored %d old SSIDs...\n", oldSsidCnt);
+			delete oldConfigData;
 		}
-
-		debugPrintf("restored %d old SSIDs...\n", oldSsidCnt);
-#endif
 	}
 
 #ifndef ESP8266
-	esp_spiffs_check(NULL);
+	err = esp_spiffs_check(NULL);
+	if (err != ESP_OK)
+	{
+		debugPrintf("spiffs check returns %x\n", err);
+	}
 #endif
 
 	// Storing an enterprise SSID and its credentials might not have
@@ -129,6 +233,7 @@ void WirelessConfigurationMgr::Reset(bool format)
 		esp_spiffs_format(NULL);
 
 #if ESP8266
+		debugPrint("erasing old flash memory area\n");
 		// This was the previous firmware calculation for the size of the SSID EEPROM region.
 		// Since we're hardcoding the erase size (one sector), make sure
 		// that the previous storage region falls within this erasure.
@@ -496,7 +601,6 @@ bool WirelessConfigurationMgr::SetKV(const char *key, const void *buff, size_t s
 	if (key && buff && sz)
 	{
 		int f = open(key, O_WRONLY | (append ? O_APPEND : O_CREAT | O_TRUNC));
-
 		if (f >= 0)
 		{
 			size_t written = write(f, buff, sz);
