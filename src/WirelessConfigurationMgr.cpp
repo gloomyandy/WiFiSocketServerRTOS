@@ -15,6 +15,7 @@
 #include "esp8266/partition.h"
 
 extern esp_rom_spiflash_chip_t g_rom_flashchip;
+#include "priv/esp_spi_flash_raw.h"
 #endif
 
 WirelessConfigurationMgr* WirelessConfigurationMgr::instance = nullptr;
@@ -22,14 +23,11 @@ WirelessConfigurationMgr* WirelessConfigurationMgr::instance = nullptr;
 #if ESP8266
 static uint32_t getOldSSIDStorageOffset()
 {
-	uint32_t offset = 0x3FB000;
-
-	if (g_rom_flashchip.chip_size == 0x200000)
-	{
-		offset = 0x1FB000;
-	}
-
-	return offset;
+	// Get the actual size from the read flash id, since the g_rom_flashchip.flash_size
+	// reports the configured size in sdkconfig. This is the same method
+	// implementing flash_id in esptool.py.
+	bool spiFlash4Mb = ((spi_flash_get_id_raw(&g_rom_flashchip) >> 16) & 0xFF) == 0x16; // 0x16 corresponds to 4MB
+	return spiFlash4Mb ? 0x3FB000 : 0x1FB000;
 }
 #endif
 
@@ -84,6 +82,7 @@ void WirelessConfigurationMgr::Init()
 
 #if ESP8266
 		uint32_t offset = getOldSSIDStorageOffset();
+		debugPrintf("checking old ssid offset 0x%0x...\n", offset);
 
 		int oldSsidCnt = 0;
 
