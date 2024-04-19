@@ -16,6 +16,7 @@
 #include "esp8266/partition.h"
 
 extern esp_rom_spiflash_chip_t g_rom_flashchip;
+#include "priv/esp_spi_flash_raw.h"
 #endif
 
 WirelessConfigurationMgr* WirelessConfigurationMgr::instance = nullptr;
@@ -30,7 +31,16 @@ WirelessConfigurationMgr* WirelessConfigurationMgr::instance = nullptr;
 #if ESP8266
 static uint32_t getOldSSIDStorageOffset()
 {
+#if 1
+	// This is the address used in our 1.27 builds. It is different from that used by Duet3d builds.
 	return 0x3FA000;
+#else
+	// Get the actual size from the read flash id, since the g_rom_flashchip.flash_size
+	// reports the configured size in sdkconfig. This is the same method
+	// implementing flash_id in esptool.py.
+	bool spiFlash4Mb = ((spi_flash_get_id_raw(&g_rom_flashchip) >> 16) & 0xFF) == 0x16; // 0x16 corresponds to 4MB
+	return spiFlash4Mb ? 0x3FB000 : 0x1FB000;
+#endif
 }
 #endif
 
@@ -183,6 +193,7 @@ void WirelessConfigurationMgr::Init()
 	if (!GetKV(GetSsidKey(key, 0), nullptr, 0) || (oldConfigData != nullptr))
 	{
 		debugPrint("initializing SSID storage...\n");
+		// We deliberately clear the old storage area that way both ESP8266/ESP32 modules are the same.
 		Reset(true);
 
 		if (oldConfigData != nullptr)

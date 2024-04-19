@@ -202,6 +202,7 @@ struct WirelessConfigurationData
 };
 
 const size_t ReducedWirelessConfigurationDataSize = offsetof(WirelessConfigurationData, password);
+static_assert(sizeof(WirelessConfigurationData) == offsetof(WirelessConfigurationData, password) + PasswordLength);
 
 struct NetworkStartClientData
 {

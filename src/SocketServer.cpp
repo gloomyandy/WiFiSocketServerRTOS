@@ -57,8 +57,14 @@ extern "C"
 #ifdef ESP8266
 #include "esp8266/spi.h"
 #include "esp8266/gpio.h"
+#include "esp8266/rom_functions.h"
+#include "esp8266/partition.h"
+
+extern esp_rom_spiflash_chip_t g_rom_flashchip;
+#include "priv/esp_spi_flash_raw.h"
 #else
 #include "esp32/spi.h"
+#include "esp_flash.h"
 #endif
 
 #include "esp_wpa2.h"
@@ -1203,7 +1209,13 @@ void ProcessRequest()
 				NetworkStatusResponse * const response = reinterpret_cast<NetworkStatusResponse*>(transferBuffer);
 				memset(response, 0, sizeof(*response));
 
-				response->flashSize = spi_flash_get_chip_size();
+#if ESP8266
+				uint32_t flashId = spi_flash_get_id_raw(&g_rom_flashchip);
+				debugPrintf("flash id is: 0x%0x\n", flashId);
+				response->flashSize = 1u << ((flashId >> 16) & 0xFF);
+#else
+				esp_flash_get_physical_size(NULL, &(response->flashSize));
+#endif
 				SafeStrncpy(response->versionText, firmwareVersion, sizeof(response->versionText));
 
 				switch (esp_reset_reason())
