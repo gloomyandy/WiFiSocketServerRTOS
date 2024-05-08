@@ -27,7 +27,7 @@ static_assert(MaxDataLength % sizeof(uint32_t) == 0, "MaxDataLength must be a wh
 const uint8_t MyFormatVersion = 0x3E;
 const uint8_t InvalidFormatVersion = 0xC9;				// must be different from any format version we have ever used
 
-const uint32_t AnyIp = 0;
+const uint32_t AnyIp = 0;								// must be the same as AcceptAnyIp in NetworkDefs.h
 
 // Return a size rounded up to to a whole number of dwords
 static inline constexpr size_t NumDwords(size_t arg)
@@ -343,6 +343,7 @@ const int32_t ResponseUnknownError = -14;
 const size_t MaxRememberedNetworks = 20;
 static_assert((MaxRememberedNetworks + 1) * ReducedWirelessConfigurationDataSize <= MaxDataLength, "Too many remembered networks");
 
-const unsigned int WiFiBaudRate = 74880;		// this is the default baud rate for the ESP8266
+const unsigned int WiFiBaudRate = 74880;			// this is the default baud rate for the ESP8266
+const unsigned int WiFiBaudRate_ESP32 = 115200;		// this is the default baud rate for the ESP32
 
 #endif /* SRC_MESSAGEFORMATS_H_ */
