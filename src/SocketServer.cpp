@@ -318,11 +318,7 @@ static void ConfigureSTAMode()
 	esp_wifi_restore();
 	esp_wifi_set_mode(WIFI_MODE_STA);
 	esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
-#if NO_WIFI_SLEEP
 	esp_wifi_set_ps(WIFI_PS_NONE);
-#else
-	esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
-#endif
 }
 
 // Rebuild the mDNS services

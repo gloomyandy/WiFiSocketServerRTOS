@@ -3,15 +3,7 @@
 #ifndef CONFIG_H_INCLUDED
 #define CONFIG_H_INCLUDED
 
-#define NO_WIFI_SLEEP	0
-
 #define VERSION_MAIN	"2.1.0"
-
-#if NO_WIFI_SLEEP
-#define VERSION_SLEEP	"-nosleep"
-#else
-#define VERSION_SLEEP	""
-#endif
 
 #ifdef DEBUG
 #define VERSION_DEBUG	"-D"
@@ -21,7 +13,7 @@
 
 #include "driver/gpio.h"
 
-const char* const firmwareVersion = VERSION_MAIN VERSION_DEBUG VERSION_SLEEP;
+const char* const firmwareVersion = VERSION_MAIN VERSION_DEBUG;
 
 // Define the maximum length (bytes) of file upload data per SPI packet. Use a multiple of the SD card sector or cluster size for efficiency.
 // ************ This must be kept in step with the corresponding value in RepRapFirmware *************
