@@ -97,12 +97,12 @@ const uint8_t Backlog = 8;
 
 
 #ifdef ESP8266
-#define CONN_POLL_STACK							(1492)
-#define CONNECTION_TASK  						(742)
+#define WIFI_CONNECTION_TASK					(1492)
+#define LISTENER_TASK  							(742)
 #define DNS_SERVER_STACK						(592)
 #else
-#define CONN_POLL_STACK							(2260)
-#define CONNECTION_TASK	 						(1560)
+#define WIFI_CONNECTION_TASK					(2260)
+#define LISTENER_TASK	 						(1560)
 #define DNS_SERVER_STACK						(1360)
 #endif
 
