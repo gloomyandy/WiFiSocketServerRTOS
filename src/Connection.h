@@ -19,9 +19,12 @@
 #include "lwip/api.h"
 
 #include "include/MessageFormats.h"			// for ConnState
+#include "Listener.h"
 
 class Connection
 {
+	friend Listener;
+
 public:
 	Connection(uint8_t num);
 
@@ -37,22 +40,31 @@ public:
 	void GetStatus(ConnStatusResponse& resp) const;
 	uint8_t GetNum() { return number; }
 
+
 	// Static functions
 	static Connection *Allocate();
 	static void Init();
-	static bool Listen(uint16_t port, uint32_t ip, uint8_t protocol, uint16_t maxConns);
-	static void StopListen(uint16_t port);
 	static void PollAll();
 	static void TerminateAll();
 
 	static Connection& Get(uint8_t num) { return *connectionList[num]; }
-	static uint16_t GetPortByProtocol(uint8_t protocol);
 	static void GetSummarySocketStatus(uint16_t& connectedSockets, uint16_t& otherEndClosedSockets);
 	static void ReportConnections();
 
+	void Deallocate()
+	{
+		if (state == ConnState::allocated)
+		{
+			SetState(ConnState::free);
+		}
+	}
+
+protected:
+	static uint16_t CountConnectionsOnPort(uint16_t port);
+	void Accept(struct netconn *conn, uint8_t protocol);
+
 private:
 	void Poll();
-	void Accept(struct netconn *conn, uint8_t protocol);
 	void Connected(struct netconn *conn);
 	void SetState(ConnState st) { state = st; }
 	ConnState GetState() const { return state; }
@@ -60,10 +72,6 @@ private:
 	void FreePbuf();
 	void Report();
 
-	static uint16_t CountConnectionsOnPort(uint16_t port);
-
-	static void ConnectionTask(void* data);
-	static void ListenCallback(struct netconn *conn, enum netconn_evt evt, u16_t len);
 	static void ConnectCallback(struct netconn *conn, enum netconn_evt evt, u16_t len);
 
 	uint8_t number;
@@ -74,14 +82,13 @@ private:
 	struct netconn *conn;		// the pcb that corresponds to this connection
 	volatile ConnState state;
 
+	uint32_t closeTimer;
+
 	struct pbuf *readBuf;		// the buffers holding data we have received that has not yet been taken
 	size_t readIndex;			// how much data we have already read from the current pbuf
 	size_t alreadyRead;			// how much data we read from previous pbufs and didn't tell LWIP about yet
 
-	static QueueHandle_t connectionQueue;
 	static SemaphoreHandle_t allocateMutex;
-
-	static struct netconn *closePending[MaxConnections];
 
 	static Connection *connectionList[MaxConnections];
 };
