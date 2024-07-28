@@ -3,7 +3,7 @@
 #ifndef CONFIG_H_INCLUDED
 #define CONFIG_H_INCLUDED
 
-#define NO_WIFI_SLEEP	0
+#define NO_WIFI_SLEEP	1
 
 #define VERSION_MAIN	"2.1.0"
 
