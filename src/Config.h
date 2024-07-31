@@ -3,7 +3,7 @@
 #ifndef CONFIG_H_INCLUDED
 #define CONFIG_H_INCLUDED
 
-#define VERSION_MAIN	"2.1.0"
+#define VERSION_MAIN	"2.1.1beta1"
 
 #ifdef DEBUG
 #define VERSION_DEBUG	"-D"
@@ -86,7 +86,6 @@ const uint8_t Backlog = 8;
 #define CONN_POLL_PRIO							(ESP_TASKD_EVENT_PRIO - 1)
 #define CONNECTION_PRIO							(MAIN_PRIO + 1)
 #define DNS_SERVER_PRIO							(ESP_TASK_MAIN_PRIO)
-
 
 #ifdef ESP8266
 #define WIFI_CONNECTION_TASK					(1492)
