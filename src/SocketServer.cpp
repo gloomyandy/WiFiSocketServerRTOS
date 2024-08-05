@@ -1152,6 +1152,7 @@ void ProcessRequest()
 						response->rssi = ap_info.rssi;
 						response->auth = EspAuthModeToWiFiAuth(ap_info.authmode);
 						SafeStrncpy(response->ssid, (const char*)ap_info.ssid, sizeof(response->ssid));
+						memcpy(reinterpret_cast<char*>(response->apMac), (const char*)ap_info.bssid, sizeof(response->apMac));
 					}
 					else
 					{

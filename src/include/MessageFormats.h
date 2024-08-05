@@ -272,6 +272,9 @@ struct NetworkStatusResponse
 			ht:	2,					// HT20, HT40 above, HT40 below
 			zero3: 2;				// unused, set to zero
 	uint8_t zero4;					// unused, set to zero
+
+	// Added on version 2.1.1
+	uint8_t apMac[6];					// MAC address of the AP the module is connected to during STA mode
 };
 
 constexpr size_t MinimumStatusResponseLength = offsetof(NetworkStatusResponse, clockReg);		// valid status responses should be at least this long
