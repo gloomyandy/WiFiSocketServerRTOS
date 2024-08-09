@@ -3,9 +3,9 @@
 #ifndef CONFIG_H_INCLUDED
 #define CONFIG_H_INCLUDED
 
-#define NO_WIFI_SLEEP	0
+#define NO_WIFI_SLEEP	1
 
-#define VERSION_MAIN	"2.1.0"
+#define VERSION_MAIN	"2.1.1beta1"
 
 #if NO_WIFI_SLEEP
 #define VERSION_SLEEP	"-nosleep"
@@ -117,14 +117,13 @@ const uint8_t Backlog = 8;
 #define CONNECTION_PRIO							(MAIN_PRIO + 1)
 #define DNS_SERVER_PRIO							(ESP_TASK_MAIN_PRIO)
 
-
 #ifdef ESP8266
-#define CONN_POLL_STACK							(1492)
-#define CONNECTION_TASK  						(742)
+#define WIFI_CONNECTION_TASK					(1492)
+#define LISTENER_TASK  							(742)
 #define DNS_SERVER_STACK						(592)
 #else
-#define CONN_POLL_STACK							(2260)
-#define CONNECTION_TASK	 						(1560)
+#define WIFI_CONNECTION_TASK					(2260)
+#define LISTENER_TASK	 						(1560)
 #define DNS_SERVER_STACK						(1360)
 #endif
 
