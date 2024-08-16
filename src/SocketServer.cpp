@@ -543,7 +543,7 @@ void WiFiConnectionTask(void* data)
 	}
 }
 
-int ScanForNetworks(const char *reqSsid, uint8_t mac[6], WirelessConfigurationData &wp)
+int ScanForNetworks(const char *reqSsid, uint8_t mac[6], int8_t &channel, WirelessConfigurationData &wp)
 {
 	ConfigureSTAMode();
 	esp_wifi_start();
@@ -593,15 +593,14 @@ int ScanForNetworks(const char *reqSsid, uint8_t mac[6], WirelessConfigurationDa
 	if (strongestNetwork >= 0) {
 		SafeStrncpy(ssid, (const char*)ap_records[strongestNetwork].ssid,
 					std::min(sizeof(ssid), sizeof(ap_records[strongestNetwork].ssid)));
-#ifndef ESP8266
-		channel = ap_records[strongestNetwork].primary;
-#endif
+
 		debugPrintfAlways("strongest known network '%s' on channel=%d, rssi=%d mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
 							ap_records[strongestNetwork].ssid, ap_records[strongestNetwork].primary, ap_records[strongestNetwork].rssi,
 							ap_records[strongestNetwork].bssid[0], ap_records[strongestNetwork].bssid[1], ap_records[strongestNetwork].bssid[2],
 							ap_records[strongestNetwork].bssid[3], ap_records[strongestNetwork].bssid[4], ap_records[strongestNetwork].bssid[5]);
 
 		memcpy(mac, ap_records[strongestNetwork].bssid, sizeof(ap_records[strongestNetwork].bssid));
+		channel = ap_records[strongestNetwork].primary;
 	}
 
 	free(ap_records);
@@ -623,14 +622,11 @@ pre(currentState == WiFiState::idle)
 	WirelessConfigurationData wp;
 	esp_wifi_stop();
 
-#ifndef ESP8266
 	int8_t channel = -1;
-#endif
-
 	wifi_config_t wifi_config;
 	memset(&wifi_config, 0, sizeof(wifi_config));
 
-	int ssidIdx = ScanForNetworks(ssid, wifi_config.sta.bssid, wp);
+	int ssidIdx = ScanForNetworks(ssid, wifi_config.sta.bssid, channel, wp);
 
 	if (ssidIdx <= 0)
 	{
