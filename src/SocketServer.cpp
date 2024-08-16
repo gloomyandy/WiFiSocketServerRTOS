@@ -66,7 +66,7 @@ extern esp_rom_spiflash_chip_t g_rom_flashchip;
 #include "esp_wpa2.h"
 
 
-static_assert(CONN_POLL_PRIO == MAIN_PRIO);
+static_assert(WIFI_CONNECTION_PRIO == MAIN_PRIO);
 
 static const uint32_t MaxConnectTime = 40 * 1000;			// how long we wait for WiFi to connect in milliseconds
 static const uint32_t TransferReadyTimeout = 10;			// how many milliseconds we allow for the Duet to set
@@ -354,7 +354,7 @@ void ConnectToAccessPoint()
 	esp_event_post(WIFI_EVENT_EXT, WIFI_EVENT_STA_CONNECTING, NULL, 0, portMAX_DELAY);
 }
 
-void ConnectPoll(void* data)
+void WiFiConnectionTask(void* data)
 {
 	constexpr led_indicator_blink_type_t ONBOARD_LED_CONNECTING = BLINK_PROVISIONING;
 	constexpr led_indicator_blink_type_t ONBOARD_LED_CONNECTED = BLINK_CONNECTED;
@@ -1846,7 +1846,7 @@ void setup()
 	cfg.nvs_enable = false;
 	esp_wifi_init(&cfg);
 
-	xTaskCreate(ConnectPoll, "connPoll", CONN_POLL_STACK, NULL, CONN_POLL_PRIO, &connPollTaskHdl);
+	xTaskCreate(WiFiConnectionTask, "wifiConnection", WIFI_CONNECTION_STACK, NULL, WIFI_CONNECTION_PRIO, &connPollTaskHdl);
 
 	esp_log_level_set("wifi", ESP_LOG_NONE);
 
