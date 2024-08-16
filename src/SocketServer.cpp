@@ -50,6 +50,7 @@ extern "C"
 #include "WirelessConfigurationMgr.h"
 
 #include "include/MessageFormats.h"
+#include "Listener.h"
 #include "Connection.h"
 #include "Misc.h"
 #include "Config.h"
@@ -70,7 +71,7 @@ extern esp_rom_spiflash_chip_t g_rom_flashchip;
 #include "esp_wpa2.h"
 
 
-static_assert(CONN_POLL_PRIO == MAIN_PRIO);
+static_assert(WIFI_CONNECTION_PRIO == MAIN_PRIO);
 
 static const uint32_t MaxConnectTime = 40 * 1000;			// how long we wait for WiFi to connect in milliseconds
 static const uint32_t TransferReadyTimeout = 10;			// how many milliseconds we allow for the Duet to set
@@ -342,11 +343,7 @@ static void ConfigureSTAMode()
 	esp_wifi_restore();
 	esp_wifi_set_mode(WIFI_MODE_STA);
 	esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
-#if NO_WIFI_SLEEP
 	esp_wifi_set_ps(WIFI_PS_NONE);
-#else
-	esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
-#endif
 }
 
 // Rebuild the mDNS services
@@ -359,7 +356,7 @@ void RebuildServices()
 	mdns_hostname_set(webHostName);
 	for (size_t protocol = 0; protocol < 3; protocol++)
 	{
-		const uint16_t port = Connection::GetPortByProtocol(protocol);
+		const uint16_t port = Listener::GetPortByProtocol(protocol);
 		if (port != 0)
 		{
 			mdns_service_add(webHostName, MdnsServiceStrings[protocol], "_tcp", port,
@@ -382,7 +379,7 @@ void ConnectToAccessPoint()
 	esp_event_post(WIFI_EVENT_EXT, WIFI_EVENT_STA_CONNECTING, NULL, 0, portMAX_DELAY);
 }
 
-void ConnectPoll(void* data)
+void WiFiConnectionTask(void* data)
 {
 	led_indicator_start(led, ONBOARD_LED_IDLE);
 
@@ -560,6 +557,78 @@ void ConnectPoll(void* data)
 	}
 }
 
+int ScanForNetworks(const char *reqSsid, uint8_t mac[6], WirelessConfigurationData &wp)
+{
+	ConfigureSTAMode();
+	esp_wifi_start();
+
+	wifi_scan_config_t cfg;
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.show_hidden = true;
+
+	cfg.ssid = (uint8_t*)reqSsid;
+
+	esp_err_t res = esp_wifi_scan_start(&cfg, true);
+
+	if (res != ESP_OK) {
+		esp_wifi_stop();
+		lastError = "network scan failed";
+		return -1;
+	}
+
+	uint16_t num_ssids = 0;
+	esp_wifi_scan_get_ap_num(&num_ssids);
+
+	wifi_ap_record_t *ap_records = (wifi_ap_record_t*) calloc(num_ssids, sizeof(wifi_ap_record_t));
+
+	esp_wifi_scan_get_ap_records(&num_ssids, ap_records);
+	esp_wifi_stop();
+
+	// Find the strongest network that we know about
+	int8_t strongestNetwork = -1;
+	for (int8_t i = 0; i < num_ssids; ++i)
+	{
+		debugPrintfAlways("found network '%s' on channel=%d, rssi=%d mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
+							ap_records[i].ssid, ap_records[i].primary, ap_records[i].rssi,
+							ap_records[i].bssid[0], ap_records[i].bssid[1], ap_records[i].bssid[2],
+							ap_records[i].bssid[3], ap_records[i].bssid[4], ap_records[i].bssid[5]);
+		if (strongestNetwork < 0 || ap_records[i].rssi > ap_records[strongestNetwork].rssi)
+		{
+			WirelessConfigurationData temp;
+			if (wirelessConfigMgr->GetSsid((const char*)ap_records[i].ssid, temp) > 0)
+			{
+				strongestNetwork = i;
+			}
+		}
+	}
+
+	char ssid[SsidLength + 1] = { 0 };
+
+	if (strongestNetwork >= 0) {
+		SafeStrncpy(ssid, (const char*)ap_records[strongestNetwork].ssid,
+					std::min(sizeof(ssid), sizeof(ap_records[strongestNetwork].ssid)));
+#ifndef ESP8266
+		channel = ap_records[strongestNetwork].primary;
+#endif
+		debugPrintfAlways("strongest known network '%s' on channel=%d, rssi=%d mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
+							ap_records[strongestNetwork].ssid, ap_records[strongestNetwork].primary, ap_records[strongestNetwork].rssi,
+							ap_records[strongestNetwork].bssid[0], ap_records[strongestNetwork].bssid[1], ap_records[strongestNetwork].bssid[2],
+							ap_records[strongestNetwork].bssid[3], ap_records[strongestNetwork].bssid[4], ap_records[strongestNetwork].bssid[5]);
+
+		memcpy(mac, ap_records[strongestNetwork].bssid, sizeof(ap_records[strongestNetwork].bssid));
+	}
+
+	free(ap_records);
+
+	if (strongestNetwork < 0)
+	{
+		return -1;
+	}
+
+	return wirelessConfigMgr->GetSsid(ssid, wp);
+}
+
+
 void StartClient(const char * array ssid)
 pre(currentState == WiFiState::idle)
 {
@@ -572,89 +641,20 @@ pre(currentState == WiFiState::idle)
 	int8_t channel = -1;
 #endif
 
-	if (ssid == nullptr || ssid[0] == 0)
-	{
-		ConfigureSTAMode();
-		esp_wifi_start();
-
-		wifi_scan_config_t cfg;
-		memset(&cfg, 0, sizeof(cfg));
-		cfg.show_hidden = true;
-
-		esp_err_t res = esp_wifi_scan_start(&cfg, true);
-
-		if (res != ESP_OK) {
-			esp_wifi_stop();
-			lastError = "network scan failed";
-			return;
-		}
-
-		uint16_t num_ssids = 0;
-		esp_wifi_scan_get_ap_num(&num_ssids);
-
-		wifi_ap_record_t *ap_records = (wifi_ap_record_t*) calloc(num_ssids, sizeof(wifi_ap_record_t));
-
-		esp_wifi_scan_get_ap_records(&num_ssids, ap_records);
-		esp_wifi_stop();
-
-		// Find the strongest network that we know about
-		int8_t strongestNetwork = -1;
-		for (int8_t i = 0; i < num_ssids; ++i)
-		{
-			debugPrintfAlways("found network '%s' on channel=%d, rssi=%d mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
-								ap_records[i].ssid, ap_records[i].primary, ap_records[i].rssi,
-								ap_records[i].bssid[0], ap_records[i].bssid[1], ap_records[i].bssid[2],
-								ap_records[i].bssid[3], ap_records[i].bssid[4], ap_records[i].bssid[5]);
-			if (strongestNetwork < 0 || ap_records[i].rssi > ap_records[strongestNetwork].rssi)
-			{
-				WirelessConfigurationData temp;
-				if (wirelessConfigMgr->GetSsid((const char*)ap_records[i].ssid, temp) > 0)
-				{
-					strongestNetwork = i;
-				}
-			}
-		}
-
-		char ssid[SsidLength + 1] = { 0 };
-
-		if (strongestNetwork >= 0) {
-			SafeStrncpy(ssid, (const char*)ap_records[strongestNetwork].ssid,
-						std::min(sizeof(ssid), sizeof(ap_records[strongestNetwork].ssid)));
-#ifndef ESP8266
-			channel = ap_records[strongestNetwork].primary;
-#endif
-			debugPrintfAlways("strongest known network '%s' on channel=%d, rssi=%d mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
-								ap_records[strongestNetwork].ssid, ap_records[strongestNetwork].primary, ap_records[strongestNetwork].rssi,
-								ap_records[strongestNetwork].bssid[0], ap_records[strongestNetwork].bssid[1], ap_records[strongestNetwork].bssid[2],
-								ap_records[strongestNetwork].bssid[3], ap_records[strongestNetwork].bssid[4], ap_records[strongestNetwork].bssid[5]);
-		}
-
-		free(ap_records);
-
-		if (strongestNetwork < 0)
-		{
-			lastError = "no known networks found";
-			return;
-		}
-
-		currentSsid = wirelessConfigMgr->GetSsid(ssid, wp);
-	}
-	else
-	{
-		int idx = wirelessConfigMgr->GetSsid(ssid, wp);
-		if (idx <= 0)
-		{
-			lastError = "no data found for requested SSID";
-			return;
-		}
-
-		currentSsid = idx;
-	}
-
-	ConfigureSTAMode();
-
 	wifi_config_t wifi_config;
 	memset(&wifi_config, 0, sizeof(wifi_config));
+
+	int ssidIdx = ScanForNetworks(ssid, wifi_config.sta.bssid, wp);
+
+	if (ssidIdx <= 0)
+	{
+		lastError = "no known networks found";
+		return;
+	}
+
+	currentSsid = ssidIdx;
+	ConfigureSTAMode();
+
 	SafeStrncpy((char*)wifi_config.sta.ssid, (char*)wp.ssid,
 		std::min(sizeof(wifi_config.sta.ssid), sizeof(wp.ssid)));
 
@@ -1316,6 +1316,7 @@ void ProcessRequest()
 							response->rssi = ap_info.rssi;
 							response->auth = EspAuthModeToWiFiAuth(ap_info.authmode);
 							SafeStrncpy(response->ssid, (const char*)ap_info.ssid, sizeof(response->ssid));
+							memcpy(reinterpret_cast<char*>(response->apMac), (const char*)ap_info.bssid, sizeof(response->apMac));
 						}
 					}
 					else
@@ -1711,7 +1712,7 @@ void ProcessRequest()
 				messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
 				ListenOrConnectData lcData;
 				hspi.transferDwords(nullptr, reinterpret_cast<uint32_t*>(&lcData), NumDwords(sizeof(lcData)));
-				const bool ok = Connection::Listen(lcData.port, lcData.remoteIp, lcData.protocol, lcData.maxConnections);
+				const bool ok = Listener::Start(lcData.port, lcData.remoteIp, lcData.protocol, lcData.maxConnections);
 				if (ok)
 				{
 					if (lcData.protocol < 3)			// if it's FTP, HTTP or Telnet protocol
@@ -1735,7 +1736,7 @@ void ProcessRequest()
 				messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
 				ListenOrConnectData lcData;
 				hspi.transferDwords(nullptr, reinterpret_cast<uint32_t*>(&lcData), NumDwords(sizeof(lcData)));
-				Connection::StopListen(lcData.port);
+				Listener::Stop(lcData.port);
 				RebuildServices();						// update the MDNS services
 				debugPrintf("Stopped listening on port %u\n", lcData.port);
 			}
@@ -1908,7 +1909,7 @@ void ProcessRequest()
 
 		case NetworkCommand::networkStop:					// disconnect from an access point, or close down our own access point
 			Connection::TerminateAll();						// terminate all connections
-			Connection::StopListen(0);							// stop listening on all ports
+			Listener::Stop(0);								// stop listening on all ports
 			RebuildServices();								// remove the MDNS services
 			switch (currentState)
 			{
@@ -2044,7 +2045,8 @@ void setup()
 	wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
 	cfg.nvs_enable = false;
 	esp_wifi_init(&cfg);
-	xTaskCreate(ConnectPoll, "connPoll", CONN_POLL_STACK, NULL, CONN_POLL_PRIO, &connPollTaskHdl);
+
+	xTaskCreate(WiFiConnectionTask, "wifiConnection", WIFI_CONNECTION_STACK, NULL, WIFI_CONNECTION_PRIO, &connPollTaskHdl);
 
 	esp_log_level_set("wifi", ESP_LOG_NONE);
 
@@ -2083,6 +2085,7 @@ void setup()
 	xTimerStart(tfrReqExpTmr, portMAX_DELAY);
 	// Setup networking
 	Connection::Init();
+	Listener::Init();
 
 	lastError = nullptr;
 	debugPrintAlways("Init completed\n");

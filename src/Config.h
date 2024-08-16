@@ -3,15 +3,7 @@
 #ifndef CONFIG_H_INCLUDED
 #define CONFIG_H_INCLUDED
 
-#define NO_WIFI_SLEEP	0
-
-#define VERSION_MAIN	"2.1.0"
-
-#if NO_WIFI_SLEEP
-#define VERSION_SLEEP	"-nosleep"
-#else
-#define VERSION_SLEEP	""
-#endif
+#define VERSION_MAIN	"2.2.0beta1"
 
 #ifdef DEBUG
 #define VERSION_DEBUG	"-D"
@@ -21,7 +13,7 @@
 
 #include "driver/gpio.h"
 
-const char* const firmwareVersion = VERSION_MAIN VERSION_DEBUG VERSION_SLEEP;
+const char* const firmwareVersion = VERSION_MAIN VERSION_DEBUG;
 
 // Define the maximum length (bytes) of file upload data per SPI packet. Use a multiple of the SD card sector or cluster size for efficiency.
 // ************ This must be kept in step with the corresponding value in RepRapFirmware *************
@@ -113,18 +105,18 @@ const uint8_t Backlog = 8;
 
 
 #define MAIN_PRIO								(ESP_TASK_TCPIP_PRIO + 1)
-#define CONN_POLL_PRIO							(ESP_TASKD_EVENT_PRIO - 1)
-#define CONNECTION_PRIO							(MAIN_PRIO + 1)
+#define WIFI_CONNECTION_PRIO					(MAIN_PRIO)
+#define TCP_LISTENER_PRIO						(ESP_TASK_TCPIP_PRIO)
 #define DNS_SERVER_PRIO							(ESP_TASK_MAIN_PRIO)
 
 
 #ifdef ESP8266
-#define CONN_POLL_STACK							(1492)
-#define CONNECTION_TASK  						(742)
+#define WIFI_CONNECTION_STACK					(1492)
+#define TCP_LISTENER_STACK  					(742)
 #define DNS_SERVER_STACK						(592)
 #else
-#define CONN_POLL_STACK							(2260)
-#define CONNECTION_TASK	 						(1560)
+#define WIFI_CONNECTION_STACK					(2260)
+#define TCP_LISTENER_STACK	 					(1560)
 #define DNS_SERVER_STACK						(1360)
 #endif
 
