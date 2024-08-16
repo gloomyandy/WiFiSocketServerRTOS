@@ -46,6 +46,7 @@ extern "C"
 #include "WirelessConfigurationMgr.h"
 
 #include "include/MessageFormats.h"
+#include "Listener.h"
 #include "Connection.h"
 #include "Misc.h"
 #include "Config.h"
@@ -331,7 +332,7 @@ void RebuildServices()
 	mdns_hostname_set(webHostName);
 	for (size_t protocol = 0; protocol < 3; protocol++)
 	{
-		const uint16_t port = Connection::GetPortByProtocol(protocol);
+		const uint16_t port = Listener::GetPortByProtocol(protocol);
 		if (port != 0)
 		{
 			mdns_service_add(webHostName, MdnsServiceStrings[protocol], "_tcp", port,
@@ -1536,7 +1537,7 @@ void ProcessRequest()
 				messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
 				ListenOrConnectData lcData;
 				hspi.transferDwords(nullptr, reinterpret_cast<uint32_t*>(&lcData), NumDwords(sizeof(lcData)));
-				const bool ok = Connection::Listen(lcData.port, lcData.remoteIp, lcData.protocol, lcData.maxConnections);
+				const bool ok = Listener::Start(lcData.port, lcData.remoteIp, lcData.protocol, lcData.maxConnections);
 				if (ok)
 				{
 					if (lcData.protocol < 3)			// if it's FTP, HTTP or Telnet protocol
@@ -1560,7 +1561,7 @@ void ProcessRequest()
 				messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
 				ListenOrConnectData lcData;
 				hspi.transferDwords(nullptr, reinterpret_cast<uint32_t*>(&lcData), NumDwords(sizeof(lcData)));
-				Connection::StopListen(lcData.port);
+				Listener::Stop(lcData.port);
 				RebuildServices();						// update the MDNS services
 				debugPrintf("Stopped listening on port %u\n", lcData.port);
 			}
@@ -1724,7 +1725,7 @@ void ProcessRequest()
 
 		case NetworkCommand::networkStop:					// disconnect from an access point, or close down our own access point
 			Connection::TerminateAll();						// terminate all connections
-			Connection::StopListen(0);							// stop listening on all ports
+			Listener::Stop(0);								// stop listening on all ports
 			RebuildServices();								// remove the MDNS services
 			switch (currentState)
 			{
@@ -1878,6 +1879,7 @@ void setup()
 
 	// Setup networking
 	Connection::Init();
+	Listener::Init();
 
 	lastError = nullptr;
 	debugPrint("Init completed\n");
