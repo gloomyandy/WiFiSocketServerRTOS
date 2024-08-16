@@ -76,6 +76,8 @@ private:
 	struct pbuf *readBuf;		// the buffers holding data we have received that has not yet been taken
 	size_t readIndex;			// how much data we have already read from the current pbuf
 	size_t alreadyRead;			// how much data we read from previous pbufs and didn't tell LWIP about yet
+	bool pendOtherEndClosed;	// indicates that the other end has closed the connection, but changing the state
+								// should wait after the data from this connection has all been read
 
 	void Poll();
 	void SetState(ConnState st) { state = st; }
@@ -89,6 +91,7 @@ private:
 	void Report();
 
 	static void ConnectCallback(struct netconn *conn, enum netconn_evt evt, u16_t len);
+
 };
 
 #endif /* SRC_CONNECTION_H_ */

@@ -18,14 +18,14 @@ static_assert(MaxConnections < CONFIG_LWIP_MAX_SOCKETS); // Limits the listen ca
 // Public interface
 Connection::Connection(uint8_t num)
 	: number(num), localPort(0), remotePort(0), remoteIp(0), conn(nullptr), state(ConnState::free),
-	closeTimer(0),readBuf(nullptr), readIndex(0), alreadyRead(0)
+	closeTimer(0),readBuf(nullptr), readIndex(0), alreadyRead(0), pendOtherEndClosed(false)
 {
 }
 
 size_t Connection::Read(uint8_t *data, size_t length)
 {
 	size_t lengthRead = 0;
-	if (readBuf != nullptr && length != 0 && ((state == ConnState::connected && !pend) || state == ConnState::otherEndClosed))
+	if (readBuf != nullptr && length != 0 && (state == ConnState::connected || state == ConnState::otherEndClosed))
 	{
 		do
 		{
@@ -52,9 +52,9 @@ size_t Connection::Read(uint8_t *data, size_t length)
 			alreadyRead = 0;
 		}
 
-		if (pend && !readBuf)
+		if (pendOtherEndClosed && !readBuf)
 		{
-			pend = false;
+			pendOtherEndClosed = false;
 			SetState(ConnState::otherEndClosed);
 		}
 	}
@@ -89,7 +89,7 @@ size_t Connection::CanRead() const
 // call in version 1.21. So I have increased it from 10 to 16, which seems to have fixed the problem..
 size_t Connection::Write(const uint8_t *data, size_t length, bool doPush, bool closeAfterSending)
 {
-	if (!(state == ConnState::connected && !pend))
+	if (!(state == ConnState::connected && !pendOtherEndClosed))
 	{
 		return 0;
 	}
@@ -140,13 +140,13 @@ size_t Connection::CanWrite() const
 {
 	// Return the amount of free space in the write buffer
 	// Note: we cannot necessarily write this amount, because it depends on memory allocations being successful.
-	return ((state == ConnState::connected && !pend) && conn->pcb.tcp) ?
+	return ((state == ConnState::connected && !pendOtherEndClosed) && conn->pcb.tcp) ?
 		std::min((size_t)tcp_sndbuf(conn->pcb.tcp), MaxDataLength) : 0;
 }
 
 void Connection::Poll()
 {
-	if ((state == ConnState::connected && !pend) || state == ConnState::otherEndClosed)
+	if ((state == ConnState::connected && !pendOtherEndClosed) || state == ConnState::otherEndClosed)
 	{
 		struct pbuf *data = nullptr;
 		err_t rc = netconn_recv_tcp_pbuf_flags(conn, &data, NETCONN_NOAUTORCVD);
@@ -166,7 +166,20 @@ void Connection::Poll()
 		{
 			if (rc == ERR_RST || rc == ERR_CLSD || rc == ERR_CONN)
 			{
-				SetState(ConnState::otherEndClosed);
+				// Pend setting the state to other end closed if there is data to be read.
+				// Otherwise, set it immediately. This is to avoid a case when a socket in RRF
+				// gets stuck in the peer disconnecting state, when it recieves the change of
+				// the connection state to other end closed first, then polls it when in fact it
+				// had data. By that time, the responder might have been already closed, leaving
+				// no one to consume this data and thus the socket unable to progress in state.
+				if (readBuf)
+				{
+					pendOtherEndClosed = true;
+				}
+				else
+				{
+					SetState(ConnState::otherEndClosed);
+				}
 			}
 			else
 			{
@@ -248,8 +261,8 @@ bool Connection::Connect(uint8_t protocol, uint32_t remoteIp, uint16_t remotePor
 	if (conn)
 	{
 		netconn_set_nonblocking(conn, true);
-		netconn_set_recvtimeout(conn, 1);
-		netconn_set_sendtimeout(conn, 1);
+		netconn_set_recvtimeout(conn, MaxReadWriteTime);
+		netconn_set_sendtimeout(conn, MaxReadWriteTime);
 
 		ip_set_option(conn->pcb.tcp, SOF_REUSEADDR);
 
@@ -295,19 +308,18 @@ void Connection::Terminate(bool external)
 
 void Connection::Accept(Listener *listener, struct netconn* conn, uint8_t protocol)
 {
-	this->conn = conn;
 	this->protocol = protocol;
 	Connected(listener, conn);
 }
 
 void Connection::Connected(Listener *listener, struct netconn* conn)
 {
+	this->conn = conn;
 	this->listener = listener;
 	localPort = conn->pcb.tcp->local_port;
 	remotePort = conn->pcb.tcp->remote_port;
 	remoteIp = conn->pcb.tcp->remote_ip.u_addr.ip4.addr;
-	readIndex = alreadyRead = 0;
-	closeTimer = 0;
+	readIndex = alreadyRead = closeTimer = pendOtherEndClosed = 0;
 
 	// This function is used in lower priority tasks than the main task.
 	// Mark the connection ready last, so the main task does not use it when it's not ready.

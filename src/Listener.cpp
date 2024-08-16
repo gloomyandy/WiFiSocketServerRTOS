@@ -214,7 +214,7 @@ void Listener::Notify()
 		{
 			Listener *listener = listeners[i];
 
-			if (listener && flags & (0b1 << i))
+			if (listener && (flags & (0b1 << i)))
 			{
 				const uint16_t numConns = Connection::CountConnectionsOnPort(listener->port);
 				if (numConns < listener->maxConnections)
@@ -227,11 +227,12 @@ void Listener::Notify()
 						if (rc == ERR_OK)
 						{
 							netconn_set_nonblocking(newConn, true);
-							netconn_set_recvtimeout(newConn, 1);
+							netconn_set_recvtimeout(newConn, MaxReadWriteTime);
+							netconn_set_sendtimeout(newConn, MaxReadWriteTime);
 							c->Accept(listener, newConn, listener->protocol);
 							if (listener->protocol == protocolFtpData)
 							{
-								debugPrintf("accept conn, stop listen on port %u\n", current->port);
+								debugPrintf("accept conn, stop listen on port %u\n", listener->port);
 								listener->Stop();	// don't listen for further connections
 							}
 						}
@@ -242,12 +243,12 @@ void Listener::Notify()
 					}
 					else
 					{
-						debugPrintfAlways("pended conn on port %u no free conn\n", listener->port);
+						debugPrintfAlways("pend connection on port %u no free conn\n", listener->port);
 					}
 				}
 				else
 				{
-					debugPrintfAlways("pended conn on port %u already %u conns\n", listener->port, numConns);
+					debugPrintfAlways("pend connection on port %u already %u conns\n", listener->port, numConns);
 				}
 			}
 		}
