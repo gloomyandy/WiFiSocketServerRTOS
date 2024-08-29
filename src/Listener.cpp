@@ -135,7 +135,8 @@ void Listener::Stop()
 		Listener *listener = listeners[i];
 		if (listener && listener->conn == conn)
 		{
-			listener = nullptr;
+			delete listener;
+			listeners[i] = nullptr;
 		}
 	}
 }
