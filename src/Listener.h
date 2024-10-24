@@ -11,25 +11,22 @@
 #include <cstdint>
 #include <cstddef>
 
+#include "include/MessageFormats.h"
 #include "lwip/api.h"
 
 class Listener
 {
 public:
-	static bool Start(uint16_t port, uint32_t ip, int protocol, int maxConns, struct netconn* conn);
-	static Listener* List() { return activeList; }
+	void Notify();
 
-	uint32_t GetIp() { return ip; }
-	uint16_t GetPort() { return port; }
-	uint8_t GetProtocol() { return protocol; }
-	uint16_t GetMaxConnections() { return maxConnections; }
-	Listener* GetNext() { return next; }
-	struct netconn* GetConnection() { return conn; }
+	static void Init();
+	static bool Start(uint16_t port, uint32_t ip, int protocol, int maxConns);
+	static void Stop(uint16_t port);
 
-	void Stop();
+	static uint16_t GetPortByProtocol(uint8_t protocol);
+	static uint8_t Find(uint8_t port);
 
 private:
-	Listener *next;
 	struct netconn *conn;
 
 	uint32_t ip;
@@ -37,8 +34,13 @@ private:
 	uint16_t maxConnections;
 	uint8_t protocol;
 
-	static Listener *activeList;
-	static Listener *freeList;
+	void Stop();
+
+	static TaskHandle_t listenTaskHandle;
+	static Listener *listeners[MaxConnections];
+
+	static void ListenerTask(void* data);
+	static void ListenCallback(struct netconn *conn, enum netconn_evt evt, u16_t len);
 };
 
 #endif /* SRC_LISTENER_H_ */
