@@ -316,7 +316,7 @@ struct ConnStatusResponse
 	ConnState state;
 	uint8_t socketNumber;
 	uint8_t protocol;
-	uint8_t dummy[1];
+	int8_t rssi;						// signal strength in fWiFi firmware 2.21 and later
 	uint16_t localPort;
 	uint16_t remotePort;
 	uint32_t remoteIp;
