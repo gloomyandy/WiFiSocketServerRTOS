@@ -41,6 +41,14 @@
    a combination of ensuring that the "dummy byte" operation is not used and be setting the:
    spi_pre_transmit_callback value to be such that the delay compensation is not used. This setting
    needs to vary based on the spi clock speed and is set when selecting the clock.
+
+   When using Ethernet the SPI and MAC devices share a DMA device. With the default MAC DMA burst
+   setting (EMAC_LL_DMA_BURST_LENGTH_32BEAT) spi transfers would sometimes not work (no data would
+   be transferred to RAM even though the operation appears to complete ok). For this reasons previous
+   versions of this code used polling rather than DMA when using Ethernet. This required changes to
+   esp-idf code to allow polled transfers > 64 bits. We now set the MAC DMA burst size to 16
+   (EMAC_LL_DMA_BURST_LENGTH_16BEAT) which seems to fix the problem. Currently this requires a change
+   to the esp-idf file emac_hal.c.
 */
 
 static void IRAM_ATTR spi_pre_transmit_callback(spi_transaction_t* arg)
@@ -105,17 +113,8 @@ void HSPIClass::InitMaster(uint8_t mode, uint32_t clockReg, bool msbFirst)
 
 	clockCtrl2Cfg(clockReg, &devcfg);
 
-#if SUPPORT_ETHERNET
-	// for reasons I don't understand when running over ethernet and using DMA we occasionaly
-	// get a read that returns all zeros. With WiFi DMA seems fine. For now we use polled I/O
-	// for ethernet builds. NOTE: This requires a modified version of the esp32 code to support
-	// packets larger the 64 bits.
-	spi_bus_initialize(MSPI, &buscfg, SPI_DMA_DISABLED);
-#else
 	spi_bus_initialize(MSPI, &buscfg, SPI_DMA_CH_AUTO);
-#endif
 	spi_bus_add_device(MSPI, &devcfg, &spi);
-
 	spi_device_acquire_bus(spi, portMAX_DELAY);
 }
 
