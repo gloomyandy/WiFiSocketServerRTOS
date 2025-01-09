@@ -921,11 +921,18 @@ static void HandleEthEvent(void *arg, esp_event_base_t event_base,
 	uint8_t mac_addr[6] = {0};
 	/* we can get the ethernet driver handle from event data */
 	esp_eth_handle_t ethHandle = *(esp_eth_handle_t *)event_data;
-
+debugPrintf("Eth event %d\n", event_id);
 	switch (event_id) {
 	case ETHERNET_EVENT_CONNECTED:
+		debugPrint("Link up delaying\n");
+		delay(5000);
+		mdns_init();
 		tcpip_adapter_set_hostname(TCPIP_ADAPTER_IF_ETH, webHostName);
-		if (!usingDhcpc)
+		if (usingDhcpc)
+		{
+			tcpip_adapter_dhcpc_start(TCPIP_ADAPTER_IF_ETH);
+		}
+		else
 		{
 			tcpip_adapter_dhcpc_stop(TCPIP_ADAPTER_IF_ETH);
 			tcpip_adapter_set_ip_info(TCPIP_ADAPTER_IF_ETH, &staIpInfo);
@@ -937,6 +944,10 @@ static void HandleEthEvent(void *arg, esp_event_base_t event_base,
 		break;
 	case ETHERNET_EVENT_DISCONNECTED:
 		debugPrint("Ethernet Link Down\n");
+		if (usingDhcpc)
+		{
+			tcpip_adapter_dhcpc_stop(TCPIP_ADAPTER_IF_ETH);
+		}
 		break;
 	case ETHERNET_EVENT_START:
 		debugPrint("Ethernet Started\n");
@@ -949,6 +960,8 @@ static void HandleEthEvent(void *arg, esp_event_base_t event_base,
 		led_indicator_stop(led, ONBOARD_LED_CONNECTED);
 		led_indicator_stop(led, ONBOARD_LED_CONNECTING);
 		led_indicator_start(led, ONBOARD_LED_IDLE);
+		//ESP_ERROR_CHECK(esp_eth_driver_uninstall(ethHandle));
+		xTaskNotify(mainTaskHdl, TFR_REQUEST, eSetBits);
 		break;
 	default:
 		break;
@@ -979,13 +992,11 @@ void EthInit()
 {
 	debugPrint("Start eth init\n");
 	ESP_ERROR_CHECK(tcpip_adapter_set_default_eth_handlers());
-	ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, &HandleEthEvent, NULL));
-	ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &GotEthIP, NULL));
 	debugPrintf("Current core is %x\n", xPortGetCoreID());
 	eth_mac_config_t mac_config = ETH_MAC_DEFAULT_CONFIG();
 	eth_phy_config_t phy_config = ETH_PHY_DEFAULT_CONFIG();
 	phy_config.phy_addr = 1;
-	phy_config.reset_gpio_num = 16;
+	phy_config.reset_gpio_num = -1;
 	mac_config.smi_mdc_gpio_num = 23;
 	mac_config.smi_mdio_gpio_num = 18;
 	esp_eth_mac_t *mac = esp_eth_mac_new_esp32(&mac_config);
@@ -993,6 +1004,8 @@ void EthInit()
 	debugPrint("Install driver\n");
 	esp_eth_config_t config = ETH_DEFAULT_CONFIG(mac, phy);
 	ESP_ERROR_CHECK(esp_eth_driver_install(&config, &ethHandle));
+	ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, &HandleEthEvent, NULL));
+	ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &GotEthIP, NULL));
 	ethState = EthState::idle;
 }
 
@@ -1031,10 +1044,10 @@ pre(currentState == WiFiState::idle)
 	else
 	{
 		usingDhcpc = true;
-		tcpip_adapter_dhcpc_start(TCPIP_ADAPTER_IF_ETH);
+		//tcpip_adapter_dhcpc_start(TCPIP_ADAPTER_IF_ETH);
 	}
 	ESP_ERROR_CHECK(esp_eth_start(ethHandle));
-	mdns_init();
+	//mdns_init();
 	debugPrint("Ethernet start complete\n");
 }
 
@@ -2037,7 +2050,7 @@ void setup()
 #pragma GCC diagnostic pop
 
 	esp_event_loop_create_default();
-
+#if 0
 	esp_event_handler_register(WIFI_EVENT_EXT, WIFI_EVENT_STA_CONNECTING, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_CONNECTED, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &HandleWiFiEvent, NULL);
@@ -2056,9 +2069,10 @@ void setup()
 	xTaskCreate(WiFiConnectionTask, "wifiConnection", WIFI_CONNECTION_STACK, NULL, WIFI_CONNECTION_PRIO, &connPollTaskHdl);
 
 	esp_log_level_set("wifi", ESP_LOG_NONE);
-
+#endif
+	wirelessConfigMgr = WirelessConfigurationMgr::GetInstance();
 	wirelessConfigMgr->Init();
-
+debugPrint("After config\n");
 #if SUPPORT_ETHERNET
 # if ETH_V0
 	// Make sure that we tristate the connection to GPIO0 to prevent conflicts
@@ -2084,15 +2098,21 @@ void setup()
 	gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
 	gpio_isr_handler_add(SamTfrReadyPin, TransferReadyIsr, nullptr);
 	gpio_set_intr_type(SamTfrReadyPin, GPIO_INTR_POSEDGE);
+debugPrint("After pins\n");
 
 	tfrReqExpTmr = xTimerCreate("tfrReqExpTmr", StatusReportMillis, pdFALSE, NULL,
 		[](TimerHandle_t data) {
 			xTaskNotify(mainTaskHdl, TFR_REQUEST_TIMEOUT, eSetBits);
 		});
 	xTimerStart(tfrReqExpTmr, portMAX_DELAY);
+debugPrint("After timer\n");
+
 	// Setup networking
 	Connection::Init();
+debugPrint("After connection init\n");
+
 	Listener::Init();
+debugPrint("After listener init\n");
 
 	lastError = nullptr;
 	debugPrintAlways("Init completed\n");
