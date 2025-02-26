@@ -22,6 +22,7 @@ extern "C"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "freertos/task.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #if SUPPORT_ETHERNET
@@ -36,6 +37,7 @@ extern "C"
 #include "mdns.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "esp_timer.h"
 
 #include "led_indicator.h"
 
@@ -88,6 +90,8 @@ static uint32_t numWifiReconnects = 0;
 static bool usingDhcpc = false;
 
 // Global data
+static uint32_t flashSize = 0;
+
 static tcpip_adapter_ip_info_t staIpInfo;
 static volatile int currentSsid = -1;
 
@@ -97,6 +101,11 @@ static_assert(HostNameLength <= CONFIG_TCPIP_ADAPTER_HOSTNAME_MAX_LENGTH);
 static_assert(HostNameLength <= CONFIG_ESP_NETIF_HOSTNAME_MAX_LENGTH);
 #endif
 static char webHostName[HostNameLength + 1] = "Duet-WiFi";
+
+#ifdef DEBUG
+static NetworkCommand lastCommand = NetworkCommand::nullCommand;
+static uint32_t commandsProcessed = 0;
+#endif
 
 static DNSServer dns;
 
@@ -190,6 +199,46 @@ bool ValidSocketNumber(uint8_t num)
 	lastError = "socket number out of range";
 	return false;
 }
+
+#ifdef DEBUG
+static void StatePrintTask(void* data)
+{
+	while (true)
+	{
+		printf("----------------------diagnostics---------------------\n");
+		printf("last_network_command: %u\n", static_cast<uint32_t>(lastCommand));
+		printf("network_commands_processed: %u\n", commandsProcessed);
+		printf("uptime_ms: %lu\n", millis());
+		printf("os_ticks: %u\n", xTaskGetTickCount());
+		printf("free_heap: %u\n", esp_get_free_heap_size());
+		printf("last_reset_reason: %u\n", esp_reset_reason());
+
+		printf("wifi_state: %u\n", static_cast<uint32_t>(currentState));
+
+		if (currentState == WiFiState::connected || currentState == WiFiState::runningAsAccessPoint)
+		{
+			tcpip_adapter_ip_info_t ip_info;
+			tcpip_adapter_get_ip_info(currentState == WiFiState::connected ? TCPIP_ADAPTER_IF_STA : TCPIP_ADAPTER_IF_AP, &ip_info);
+
+			uint8_t *ip = reinterpret_cast<uint8_t*>(&ip_info.ip.addr);
+			printf("ip_addr: %d.%d.%d.%d\n", ip[0], ip[1], ip[2], ip[3]);
+
+			ip = reinterpret_cast<uint8_t*>(&ip_info.netmask.addr);
+			printf("netmask: %d.%d.%d.%d\n", ip[0], ip[1], ip[2], ip[3]);
+
+			ip = reinterpret_cast<uint8_t*>(&ip_info.gw.addr);
+			printf("gateway: %d.%d.%d.%d\n", ip[0], ip[1], ip[2], ip[3]);
+		}
+
+		uint16_t connected, otherEndClosed;
+		Connection::GetSummarySocketStatus(connected, otherEndClosed);
+		printf("connected_sockets: 0x%x other_end_closed_sockets: 0x%x\n", connected, otherEndClosed);
+		Connection::ReportConnections();
+		printf("------------------------------------------------------\n");
+		vTaskDelay(pdMS_TO_TICKS(250));
+	}
+}
+#endif
 
 static inline bool isFirstConnectWorkaround()
 {
@@ -1132,6 +1181,10 @@ void ProcessRequest()
 	messageHeaderOut.hdr.state = currentState;
 	bool deferCommand = false;
 
+#ifdef DEBUG
+	lastCommand = NetworkCommand::nullCommand;
+#endif
+
 	// Begin the transaction
 	gpio_set_level(SamSSPin, 0);		// assert CS to SAM
 	hspi.beginTransaction();
@@ -1153,6 +1206,11 @@ void ProcessRequest()
 	else
 	{
 		const size_t dataBufferAvailable = std::min<size_t>(messageHeaderIn.hdr.dataBufferAvailable, MaxDataLength);
+
+#ifdef DEBUG
+		lastCommand = messageHeaderIn.hdr.command;
+		commandsProcessed++;
+#endif
 
 		// See what command we have received and take appropriate action
 		switch (messageHeaderIn.hdr.command)
@@ -1205,13 +1263,8 @@ void ProcessRequest()
 				NetworkStatusResponse * const response = reinterpret_cast<NetworkStatusResponse*>(transferBuffer);
 				memset(response, 0, sizeof(*response));
 
-#if ESP8266
-				uint32_t flashId = spi_flash_get_id_raw(&g_rom_flashchip);
-				debugPrintf("flash id is: 0x%0x\n", flashId);
-				response->flashSize = 1u << ((flashId >> 16) & 0xFF);
-#else
-				esp_flash_get_physical_size(NULL, &(response->flashSize));
-#endif
+				response->flashSize = flashSize;
+
 				SafeStrncpy(response->versionText, firmwareVersion, sizeof(response->versionText));
 
 				switch (esp_reset_reason())
@@ -1831,6 +1884,7 @@ void ProcessRequest()
 		case NetworkCommand::diagnostics:					// print some debug info over the UART line
 			SendResponse(ResponseEmpty);
 			deferCommand = true;							// we need to send the diagnostics after we have sent the response, so the SAM is ready to receive them
+
 			break;
 
 		case NetworkCommand::networkSetTxPower:
@@ -2021,6 +2075,14 @@ void IRAM_ATTR TransferReadyIsr(void* p)
 
 void setup()
 {
+#if ESP8266
+	uint32_t flashId = spi_flash_get_id_raw(&g_rom_flashchip);
+	debugPrintf("flash id is: 0x%0x\n", flashId);
+	flashSize = 1u << ((flashId >> 16) & 0xFF);
+#else
+	esp_flash_get_physical_size(NULL, &(flashSize));
+#endif
+
 	mainTaskHdl = xTaskGetCurrentTaskHandle();
 	debugPrintAlways("\r\nESP Starting setup\n");
 	led_indicator_config_t ledCfg;
@@ -2054,6 +2116,10 @@ void setup()
 	esp_wifi_init(&cfg);
 
 	xTaskCreate(WiFiConnectionTask, "wifiConnection", WIFI_CONNECTION_STACK, NULL, WIFI_CONNECTION_PRIO, &connPollTaskHdl);
+
+#ifdef DEBUG
+	xTaskCreate(StatePrintTask, "statePrint", STATE_PRINT_STACK, NULL, tskIDLE_PRIORITY, NULL);
+#endif
 
 	esp_log_level_set("wifi", ESP_LOG_NONE);
 
