@@ -135,6 +135,15 @@ enum class EthState : uint8_t
 static esp_eth_handle_t ethHandle = NULL;
 static EthState  ethState = EthState::disabled;
 static const char * ethSSID = "ethernet";
+
+static struct {
+	const char *name;
+	const uint32_t mode;
+} ethModes[] = {{"ethernet", 0b111},
+				{"ethernet-10h", 0b000},
+				{"ethernet-10f", 0b001},
+				{"ethernet-100h", 0b010},
+				{"ethernet-100f", 0b011}};
 #endif
 // Workaround for https://github.com/espressif/esp-idf/issues/12315, remove once issue is fixed.
 // To summarize: Initial connection attempt on some access points fail when the
@@ -921,11 +930,8 @@ static void HandleEthEvent(void *arg, esp_event_base_t event_base,
 	uint8_t mac_addr[6] = {0};
 	/* we can get the ethernet driver handle from event data */
 	esp_eth_handle_t ethHandle = *(esp_eth_handle_t *)event_data;
-debugPrintf("Eth event %d\n", event_id);
 	switch (event_id) {
 	case ETHERNET_EVENT_CONNECTED:
-		debugPrint("Link up delaying\n");
-		delay(5000);
 		mdns_init();
 		tcpip_adapter_set_hostname(TCPIP_ADAPTER_IF_ETH, webHostName);
 		if (usingDhcpc)
@@ -960,6 +966,7 @@ debugPrintf("Eth event %d\n", event_id);
 		led_indicator_stop(led, ONBOARD_LED_CONNECTED);
 		led_indicator_stop(led, ONBOARD_LED_CONNECTING);
 		led_indicator_start(led, ONBOARD_LED_IDLE);
+		// We don't seem to be able to uninstall the driver
 		//ESP_ERROR_CHECK(esp_eth_driver_uninstall(ethHandle));
 		xTaskNotify(mainTaskHdl, TFR_REQUEST, eSetBits);
 		break;
@@ -988,9 +995,14 @@ static void GotEthIP(void *arg, esp_event_base_t event_base,
 	led_indicator_start(led, ONBOARD_LED_CONNECTED);
 }
 
-void EthInit()
+//Nasty hack to let us set the operating mode
+extern uint32_t lan87xxOperatingMode;
+
+void EthInit(uint32_t mode)
 {
-	debugPrint("Start eth init\n");
+	debugPrintf("Start eth init mode %x\n", mode);
+	lan87xxOperatingMode = mode;
+
 	ESP_ERROR_CHECK(tcpip_adapter_set_default_eth_handlers());
 	debugPrintf("Current core is %x\n", xPortGetCoreID());
 	eth_mac_config_t mac_config = ETH_MAC_DEFAULT_CONFIG();
@@ -1009,7 +1021,7 @@ void EthInit()
 	ethState = EthState::idle;
 }
 
-void EthStartClient()
+void EthStartClient(int32_t mode)
 pre(currentState == WiFiState::idle)
 {
 	led_indicator_stop(led, ONBOARD_LED_IDLE);
@@ -1017,7 +1029,7 @@ pre(currentState == WiFiState::idle)
 	debugPrint("Starting ethernet\n");
 	if (ethState == EthState::disabled)
 	{
-		EthInit();
+		EthInit(mode);
 	}
 	currentState = WiFiState::connecting;
 
@@ -1049,6 +1061,31 @@ pre(currentState == WiFiState::idle)
 	ESP_ERROR_CHECK(esp_eth_start(ethHandle));
 	//mdns_init();
 	debugPrint("Ethernet start complete\n");
+}
+
+static int32_t EthGetMode(const char *target)
+{
+	for(size_t i = 0; i < ARRAY_SIZE(ethModes); i++)
+	{
+		if (strcmp(target, ethModes[i].name) == 0)
+		{
+			return ethModes[i].mode;
+		}
+	}
+	return -1;
+}
+
+static uint32_t EthGetConnectionSpeed()
+{
+	uint32_t ret = 0;
+	eth_speed_t speed = ETH_SPEED_100M;
+
+	esp_eth_ioctl(ethHandle, ETH_CMD_G_SPEED, &speed);
+	ret = speed == ETH_SPEED_10M ? 10 : 100;
+	eth_duplex_t duplex = ETH_DUPLEX_FULL;
+	esp_eth_ioctl(ethHandle, ETH_CMD_G_DUPLEX_MODE, &duplex);
+	ret = ret + (duplex == ETH_DUPLEX_FULL ? 2 : 1);
+	return ret;
 }
 
 #endif
@@ -1317,6 +1354,7 @@ void ProcessRequest()
 						if (ethState >= EthState::started)
 						{
 							SafeStrncpy(response->ssid, ethSSID, strlen(ethSSID)+1);
+							response->rssi = EthGetConnectionSpeed();
 						}
 						else							
 #endif
@@ -1912,9 +1950,9 @@ void ProcessRequest()
 				StartClient(nullptr);						// connect to strongest known access point
 			}
 #if SUPPORT_ETHERNET
-			else if (!strcmp(reinterpret_cast<const char*>(transferBuffer), ethSSID))
+			else if (EthGetMode(reinterpret_cast<const char*>(transferBuffer)) >= 0)
 			{
-				EthStartClient();
+				EthStartClient(EthGetMode(reinterpret_cast<const char*>(transferBuffer)));
 			}
 #endif
 			else
@@ -2050,7 +2088,7 @@ void setup()
 #pragma GCC diagnostic pop
 
 	esp_event_loop_create_default();
-#if 0
+
 	esp_event_handler_register(WIFI_EVENT_EXT, WIFI_EVENT_STA_CONNECTING, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_CONNECTED, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &HandleWiFiEvent, NULL);
@@ -2069,10 +2107,10 @@ void setup()
 	xTaskCreate(WiFiConnectionTask, "wifiConnection", WIFI_CONNECTION_STACK, NULL, WIFI_CONNECTION_PRIO, &connPollTaskHdl);
 
 	esp_log_level_set("wifi", ESP_LOG_NONE);
-#endif
+
 	wirelessConfigMgr = WirelessConfigurationMgr::GetInstance();
 	wirelessConfigMgr->Init();
-debugPrint("After config\n");
+
 #if SUPPORT_ETHERNET
 # if ETH_V0
 	// Make sure that we tristate the connection to GPIO0 to prevent conflicts
@@ -2098,21 +2136,17 @@ debugPrint("After config\n");
 	gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
 	gpio_isr_handler_add(SamTfrReadyPin, TransferReadyIsr, nullptr);
 	gpio_set_intr_type(SamTfrReadyPin, GPIO_INTR_POSEDGE);
-debugPrint("After pins\n");
 
 	tfrReqExpTmr = xTimerCreate("tfrReqExpTmr", StatusReportMillis, pdFALSE, NULL,
 		[](TimerHandle_t data) {
 			xTaskNotify(mainTaskHdl, TFR_REQUEST_TIMEOUT, eSetBits);
 		});
 	xTimerStart(tfrReqExpTmr, portMAX_DELAY);
-debugPrint("After timer\n");
 
 	// Setup networking
 	Connection::Init();
-debugPrint("After connection init\n");
 
 	Listener::Init();
-debugPrint("After listener init\n");
 
 	lastError = nullptr;
 	debugPrintAlways("Init completed\n");
