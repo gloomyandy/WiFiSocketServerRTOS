@@ -7,6 +7,7 @@
 #include <sys/unistd.h>
 #include "nvs_flash.h"
 #include "esp_spiffs.h"
+#include "spi_flash_mmap.h"
 
 #include "Config.h"
 #include "Misc.h"
@@ -135,7 +136,7 @@ static uint8_t* GetAnyOldConfigData()
 		}
 	}
 	// no valid data found
-	delete oldData;
+	delete[] oldData;
 	return nullptr;
 }
 
@@ -183,7 +184,7 @@ void WirelessConfigurationMgr::Init()
 	spi_flash_mmap_handle_t mapHandle;
 	scratchPartition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, SCRATCH_DIR);
 
-	esp_partition_mmap(scratchPartition, 0, scratchPartition->size, SPI_FLASH_MMAP_DATA,
+	esp_partition_mmap(scratchPartition, 0, scratchPartition->size, ESP_PARTITION_MMAP_DATA,
 						reinterpret_cast<const void**>(&scratchBase), &mapHandle);
 
 	char key[MAX_KEY_LEN] = { 0 };
@@ -210,7 +211,7 @@ void WirelessConfigurationMgr::Init()
 				}
 			}
 			debugPrintf("restored %d old SSIDs...\n", oldSsidCnt);
-			delete oldConfigData;
+			delete[] oldConfigData;
 		}
 	}
 
