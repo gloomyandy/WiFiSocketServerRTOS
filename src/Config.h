@@ -80,6 +80,13 @@ const gpio_num_t OnboardLedPin = GPIO_NUM_32;
 const bool LedOffLevel = false;
 const uint32_t defaultClockControl = 0x2003;		// 80MHz/4, mark:space 2:1
 # endif
+#elif CONFIG_IDF_TARGET_ESP32C5
+const gpio_num_t SamSSPin = GPIO_NUM_10;
+const gpio_num_t EspReqTransferPin = GPIO_NUM_28;
+const gpio_num_t SamTfrReadyPin = GPIO_NUM_27;
+const gpio_num_t OnboardLedPin = GPIO_NUM_25;
+const bool LedOffLevel = false;
+const uint32_t defaultClockControl = 0x2003;		// 80MHz/4, mark:space 2:1
 #else
 #error "pins not specifed for target chip"
 #endif

@@ -38,6 +38,10 @@ static const gpio_num_t SCK = GPIO_NUM_18;
 static const gpio_num_t MOSI = GPIO_NUM_23;
 static const gpio_num_t MISO = GPIO_NUM_19;
 # endif
+#elif CONFIG_IDF_TARGET_ESP32C5
+static const gpio_num_t SCK = GPIO_NUM_6;
+static const gpio_num_t MOSI = GPIO_NUM_7;
+static const gpio_num_t MISO = GPIO_NUM_2;
 #else
 #error "pins not specifed for target chip"
 #endif
