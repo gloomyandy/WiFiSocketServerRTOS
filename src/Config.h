@@ -93,6 +93,9 @@ const uint32_t defaultClockControl = 0x2003;		// 80MHz/4, mark:space 2:1
 
 #endif
 
+// Do we support 5G?
+#define SUPPORT_5G CONFIG_IDF_TARGET_ESP32C5
+
 const uint8_t Backlog = 8;
 
 #define ARRAY_SIZE(_x) (sizeof(_x)/sizeof((_x)[0]))

@@ -96,6 +96,9 @@ enum class EspWiFiPhyMode : uint8_t
 	B = 1,
 	G = 2,
 	N = 3,
+	A = 4,
+	AC = 5,
+	AX = 6
 };
 
 enum class WiFiAuth : uint8_t
@@ -252,8 +255,8 @@ struct NetworkStatusResponse
 	int8_t rssi;					// received signal strength (if operating as a wifi client)
 	uint8_t numClients;				// the number of connected clients (if operating as an AP)
 	uint8_t sleepMode : 2,			// the wifi sleep mode, 0 = unknown, 1 = none, 2 = light, 3 = modem
-			phyMode: 2,				// the connection mode to the AP, 1 = B, 2 = G, 3 = N
-			zero1 : 4;				// unused, set to zero
+			phyMode: 3,				// the connection mode to the AP, 1 = B, 2 = G, 3 = N, 4 = A, 5 = AC, 6 = AX
+			zero1 : 3;				// unused, set to zero
 	uint8_t zero2;					// unused, set to zero
 	uint16_t vcc;					// ESP Vcc voltage according to its ADC
     uint8_t macAddress[6];			// MAC address
@@ -268,13 +271,13 @@ struct NetworkStatusResponse
 	uint32_t numReconnects;			// number of reconnections since the explicit STA connection by RRF
 	uint8_t  usingDhcpc;			// if the current ip, netmask, gateway was obtained through DHCP as a client
 	WiFiAuth auth;					// authentication method of the AP connected to in STA mode, in AP mode always WPA2-Personal
-	uint8_t channel : 4,			// primary channel used by the STA/AP connection
+	uint8_t channel : 4,			// primary channel used by the STA/AP connection, set to 0 if 5G
 			ht:	2,					// HT20, HT40 above, HT40 below
 			zero3: 2;				// unused, set to zero
-	uint8_t zero4;					// unused, set to zero
+	uint8_t channel5G;				// channel number if using 5G
 
 	// Added on version 2.1.1
-	uint8_t apMac[6];					// MAC address of the AP the module is connected to during STA mode
+	uint8_t apMac[6];				// MAC address of the AP the module is connected to during STA mode
 };
 
 constexpr size_t MinimumStatusResponseLength = offsetof(NetworkStatusResponse, clockReg);		// valid status responses should be at least this long

@@ -88,6 +88,7 @@ static uint32_t numWifiReconnects = 0;
 static bool usingDhcpc = false;
 
 // Global data
+static uint32_t flashSize = 0;
 #if OLD_SDK
 static tcpip_adapter_ip_info_t staIpInfo;
 #else
@@ -372,7 +373,14 @@ static void ConfigureSTAMode()
 {
 	esp_wifi_restore();
 	esp_wifi_set_mode(WIFI_MODE_STA);
-	esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+#if SUPPORT_5G
+	wifi_protocols_t protocols;
+	protocols.ghz_2g = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_11AX;
+	protocols.ghz_5g = WIFI_PROTOCOL_11A|WIFI_PROTOCOL_11N|WIFI_PROTOCOL_11AC|WIFI_PROTOCOL_11AX;
+	ESP_ERROR_CHECK(esp_wifi_set_protocols(WIFI_IF_STA, &protocols));
+#else
+	ESP_ERROR_CHECK(esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N, WIFI_PROTOCOL_11AX ));
+#endif
 	esp_wifi_set_ps(WIFI_PS_NONE);
 }
 
@@ -591,7 +599,9 @@ int ScanForNetworks(const char *reqSsid, uint8_t mac[6], int8_t &channel, Wirele
 {
 	ConfigureSTAMode();
 	esp_wifi_start();
-
+#if SUPPORT_5G
+	ESP_ERROR_CHECK(esp_wifi_set_band_mode(WIFI_BAND_MODE_AUTO));
+#endif
 	wifi_scan_config_t cfg;
 	memset(&cfg, 0, sizeof(cfg));
 	cfg.show_hidden = true;
@@ -685,6 +695,10 @@ pre(currentState == WiFiState::idle)
 		std::min(sizeof(wifi_config.sta.ssid), sizeof(wp.ssid)));
 
 #ifndef ESP8266
+#if SUPPORT_5G
+	wifi_config.sta.channel = channel;
+	wifi_config.sta.bssid_set = true;
+#else
 	if (channel >= 0 && channel <= 13)
 	{
 		wifi_config.sta.channel = channel;
@@ -693,6 +707,7 @@ pre(currentState == WiFiState::idle)
 	{
 		wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
 	}
+#endif
 #else
 	// Workaround for ESP8266, which seems to ignore the channel argument,
 	// instead preferring to connect to the previously connected to channel.
@@ -803,9 +818,16 @@ pre(currentState == WiFiState::idle)
 	}
 
 	esp_wifi_start();
-
+#if SUPPORT_5G
+	ESP_ERROR_CHECK(esp_wifi_set_band_mode(WIFI_BAND_MODE_AUTO));
+#endif
 	// ssidData contains the details of the strongest known access point
 	debugPrintf("Trying to connect to ssid \"%s\" with password \"%s\"\n", wp.ssid, wp.password);
+	debugPrintfAlways("using channel=%d, mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
+					wifi_config.sta.channel,
+					wifi_config.sta.bssid[0], wifi_config.sta.bssid[1], wifi_config.sta.bssid[2],
+					wifi_config.sta.bssid[3], wifi_config.sta.bssid[4], wifi_config.sta.bssid[5]);
+
 	ConnectToAccessPoint();
 }
 
@@ -913,6 +935,10 @@ void StartAccessPoint()
 					debugPrintf("Starting AP %s with password \"%s\"\n", apData.ssid, apData.password);
 					currentSsid = WirelessConfigurationMgr::AP;
 					res = esp_wifi_start();
+#if SUPPORT_5G
+					ESP_ERROR_CHECK(esp_wifi_set_band_mode(WIFI_BAND_MODE_AUTO));
+#endif
+
 				}
 
 				if (res != ESP_OK)
@@ -1325,13 +1351,7 @@ void ProcessRequest()
 				NetworkStatusResponse * const response = reinterpret_cast<NetworkStatusResponse*>(transferBuffer);
 				memset(response, 0, sizeof(*response));
 
-#if ESP8266
-				uint32_t flashId = spi_flash_get_id_raw(&g_rom_flashchip);
-				debugPrintf("flash id is: 0x%0x\n", flashId);
-				response->flashSize = 1u << ((flashId >> 16) & 0xFF);
-#else
-				esp_flash_get_physical_size(NULL, &(response->flashSize));
-#endif
+				response->flashSize = flashSize;
 				SafeStrncpy(response->versionText, firmwareVersion, sizeof(response->versionText));
 
 				switch (esp_reset_reason())
@@ -1434,6 +1454,21 @@ void ProcessRequest()
 							response->auth = EspAuthModeToWiFiAuth(ap_info.authmode);
 							SafeStrncpy(response->ssid, (const char*)ap_info.ssid, sizeof(response->ssid));
 							memcpy(reinterpret_cast<char*>(response->apMac), (const char*)ap_info.bssid, sizeof(response->apMac));
+#if SUPPORT_5G
+							if (ap_info.phy_11ax)
+								response->phyMode = static_cast<int>(EspWiFiPhyMode::AX);
+							else if (ap_info.phy_11ac)
+								response->phyMode = static_cast<int>(EspWiFiPhyMode::AC);
+							else if (ap_info.phy_11a)
+								response->phyMode = static_cast<int>(EspWiFiPhyMode::A);
+							else
+#endif
+							if (ap_info.phy_11n)
+								response->phyMode = static_cast<int>(EspWiFiPhyMode::N);
+							else if (ap_info.phy_11g)
+								response->phyMode = static_cast<int>(EspWiFiPhyMode::G);
+							else if (ap_info.phy_11b)
+								response->phyMode = static_cast<int>(EspWiFiPhyMode::B);
 						}
 					}
 					else
@@ -1447,6 +1482,11 @@ void ProcessRequest()
 						esp_wifi_get_config(WIFI_IF_AP, &ap_cfg);
 						response->auth = EspAuthModeToWiFiAuth(ap_cfg.ap.authmode);
 						SafeStrncpy(response->ssid, (const char*)ap_cfg.ap.ssid, sizeof(response->ssid));
+#if SUPPORT_5G
+						response->phyMode = static_cast<int>(EspWiFiPhyMode::AX);
+#else
+						response->phyMode = static_cast<int>(EspWiFiPhyMode::N);
+#endif
 					}
 #if OLD_SDK
 					tcpip_adapter_ip_info_t ip_info;
@@ -1473,7 +1513,10 @@ void ProcessRequest()
 						uint8_t pChan;
 						wifi_second_chan_t sChan;
 						esp_wifi_get_channel(&pChan, &sChan);
-						response->channel = pChan;
+						if (pChan <= 15)
+							response->channel = pChan;
+						else
+							response->channel5G = pChan;
 
 						switch (sChan)
 						{
@@ -1491,17 +1534,6 @@ void ProcessRequest()
 
 						default:
 							break;
-						}
-
-						uint8_t EspWiFiPhyMode = 0;
-						esp_wifi_get_protocol(runningAsStation ? WIFI_IF_STA : WIFI_IF_AP, &EspWiFiPhyMode);
-
-						if (EspWiFiPhyMode | WIFI_PROTOCOL_11N) {
-							response->phyMode = static_cast<int>(EspWiFiPhyMode::N);
-						} else if (EspWiFiPhyMode | WIFI_PROTOCOL_11G) {
-							response->phyMode = static_cast<int>(EspWiFiPhyMode::G);
-						} else if (EspWiFiPhyMode | WIFI_PROTOCOL_11B) {
-							response->phyMode = static_cast<int>(EspWiFiPhyMode::B);
 						}
 					}
 				}
@@ -2150,6 +2182,13 @@ void IRAM_ATTR TransferReadyIsr(void* p)
 
 void setup()
 {
+#if ESP8266
+	uint32_t flashId = spi_flash_get_id_raw(&g_rom_flashchip);
+	debugPrintf("flash id is: 0x%0x\n", flashId);
+	flashSize = 1u << ((flashId >> 16) & 0xFF);
+#else
+	esp_flash_get_physical_size(NULL, &flashSize);
+#endif
 	mainTaskHdl = xTaskGetCurrentTaskHandle();
 	debugPrintAlways("\r\nESP Starting setup\n");
 	led_indicator_config_t ledCfg;
@@ -2171,6 +2210,7 @@ void setup()
 
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     sta_netif = esp_netif_create_default_wifi_sta();
+	ap_netif = esp_netif_create_default_wifi_ap();
 #endif
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
 	cfg.nvs_enable = false;
