@@ -595,6 +595,13 @@ void WiFiConnectionTask(void* data)
 	}
 }
 
+static void debugPrintNetwork(const char *desc, wifi_ap_record_t *apr)
+{
+	debugPrintfAlways("%s '%s' on channel=%d, rssi=%d mac=%02x:%02x:%02x:%02x:%02x:%02x\n", desc,
+					apr->ssid, apr->primary, apr->rssi,
+					apr->bssid[0], apr->bssid[1], apr->bssid[2], apr->bssid[3], apr->bssid[4], apr->bssid[5]);
+}
+
 int ScanForNetworks(const char *reqSsid, uint8_t mac[6], int8_t &channel, WirelessConfigurationData &wp)
 {
 	ConfigureSTAMode();
@@ -625,34 +632,53 @@ int ScanForNetworks(const char *reqSsid, uint8_t mac[6], int8_t &channel, Wirele
 	esp_wifi_stop();
 
 	// Find the strongest network that we know about
-	int8_t strongestNetwork = -1;
-	for (int8_t i = 0; i < num_ssids; ++i)
+	int32_t strongestNetwork = -1;
+	int32_t strongest5GNetwork = -1;
+	for (int32_t i = 0; i < num_ssids; ++i)
 	{
-		debugPrintfAlways("found network '%s' on channel=%d, rssi=%d mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
-							ap_records[i].ssid, ap_records[i].primary, ap_records[i].rssi,
-							ap_records[i].bssid[0], ap_records[i].bssid[1], ap_records[i].bssid[2],
-							ap_records[i].bssid[3], ap_records[i].bssid[4], ap_records[i].bssid[5]);
-		if (strongestNetwork < 0 || ap_records[i].rssi > ap_records[strongestNetwork].rssi)
+		debugPrintNetwork("found network", &ap_records[i]);
+		if (ap_records[i].primary >= MIN_5G_CHANNEL)
 		{
-			WirelessConfigurationData temp;
-			if (wirelessConfigMgr->GetSsid((const char*)ap_records[i].ssid, temp) > 0)
+			if (strongest5GNetwork < 0 || ap_records[i].rssi > ap_records[strongest5GNetwork].rssi)
 			{
-				strongestNetwork = i;
+				WirelessConfigurationData temp;
+				if (wirelessConfigMgr->GetSsid((const char*)ap_records[i].ssid, ap_records[i].primary, temp) > 0)
+				{
+					strongest5GNetwork = i;
+				}
+			}
+		}
+		else
+		{
+			if (strongestNetwork < 0 || ap_records[i].rssi > ap_records[strongestNetwork].rssi)
+			{
+				WirelessConfigurationData temp;
+				if (wirelessConfigMgr->GetSsid((const char*)ap_records[i].ssid, ap_records[i].primary, temp) > 0)
+				{
+					strongestNetwork = i;
+				}
 			}
 		}
 	}
 
 	char ssid[SsidLength + 1] = { 0 };
+	if (strongestNetwork >= 0)
+	{
+		debugPrintNetwork("strongest 2G network", &ap_records[strongestNetwork]);
+	}
+	if (strongest5GNetwork >= 0)
+	{
+		debugPrintNetwork("strongest 5G network", &ap_records[strongest5GNetwork]);
+		if (strongestNetwork < 0 || ap_records[strongest5GNetwork].rssi > MIN_5G_THRESHOLD || ap_records[strongest5GNetwork].rssi >= ap_records[strongestNetwork].rssi)
+		{
+			strongestNetwork = strongest5GNetwork;
+		}
+	}
 
 	if (strongestNetwork >= 0) {
 		SafeStrncpy(ssid, (const char*)ap_records[strongestNetwork].ssid,
 					std::min(sizeof(ssid), sizeof(ap_records[strongestNetwork].ssid)));
-
-		debugPrintfAlways("strongest known network '%s' on channel=%d, rssi=%d mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
-							ap_records[strongestNetwork].ssid, ap_records[strongestNetwork].primary, ap_records[strongestNetwork].rssi,
-							ap_records[strongestNetwork].bssid[0], ap_records[strongestNetwork].bssid[1], ap_records[strongestNetwork].bssid[2],
-							ap_records[strongestNetwork].bssid[3], ap_records[strongestNetwork].bssid[4], ap_records[strongestNetwork].bssid[5]);
-
+		debugPrintNetwork("selected network", &ap_records[strongestNetwork]);
 		memcpy(mac, ap_records[strongestNetwork].bssid, sizeof(ap_records[strongestNetwork].bssid));
 		channel = ap_records[strongestNetwork].primary;
 	}
@@ -664,7 +690,7 @@ int ScanForNetworks(const char *reqSsid, uint8_t mac[6], int8_t &channel, Wirele
 		return -1;
 	}
 
-	return wirelessConfigMgr->GetSsid(ssid, wp);
+	return wirelessConfigMgr->GetSsid(ssid, 0, wp);
 }
 
 
@@ -1131,7 +1157,7 @@ pre(currentState == WiFiState::idle)
 	// Look to see if we have any ethernet specific IP configuration
 	memset(&staIpInfo, 0, sizeof(staIpInfo));
 	WirelessConfigurationData wp;
-	int idx = wirelessConfigMgr->GetSsid(ethSSID, wp);
+	int idx = wirelessConfigMgr->GetSsid(ethSSID, 0, wp);
 	if (idx > 0)
 	{
 		debugPrintf("Found ethernet config in slot %d\n", idx);

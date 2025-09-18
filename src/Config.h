@@ -130,4 +130,12 @@ const uint8_t Backlog = 8;
 #define DNS_SERVER_STACK						(1360)
 #endif
 
+const uint8_t ANY_CHANNEL = 0;
+const uint8_t ANY_5G_CHANNEL = 255;
+const uint8_t ANY_2G_CHANNEL = 254;
+const uint8_t MIN_2G_CHANNEL = 1;
+const uint8_t MAX_2G_CHANNEL = 14;
+const uint8_t MIN_5G_CHANNEL = 36;
+const uint8_t MAX_5G_CHANNEL = 165;
+const int8_t MIN_5G_THRESHOLD = -70;
 #endif

@@ -285,7 +285,7 @@ int WirelessConfigurationMgr::SetSsid(const WirelessConfigurationData& data, boo
 
 	if (!ap)
 	{
-		ssid = GetSsid(data.ssid, temp);
+		ssid = GetSsid(data.ssid, 0, temp);
 
 		if (ssid < 0)
 		{
@@ -330,7 +330,7 @@ bool WirelessConfigurationMgr::EraseSsid(int ssid)
 bool WirelessConfigurationMgr::EraseSsid(const char *ssid)
 {
 	WirelessConfigurationData temp;
-	return EraseSsid(GetSsid(ssid, temp));
+	return EraseSsid(GetSsid(ssid, 0, temp));
 }
 
 bool WirelessConfigurationMgr::GetSsid(int ssid, WirelessConfigurationData& data) const
@@ -339,14 +339,17 @@ bool WirelessConfigurationMgr::GetSsid(int ssid, WirelessConfigurationData& data
 	return GetKV(GetSsidKey(key, ssid), &data, sizeof(data));
 }
 
-int WirelessConfigurationMgr::GetSsid(const char *ssid, WirelessConfigurationData& data) const
+int WirelessConfigurationMgr::GetSsid(const char *ssid, uint8_t chan, WirelessConfigurationData& data) const
 {
 	if (ssid)
 	{
 		for (int i = MaxRememberedNetworks; i >= 0; i--)
 		{
 			WirelessConfigurationData temp;
-			if (GetSsid(i, temp) && strncmp(ssid, temp.ssid, sizeof(temp.ssid)) == 0)
+			if (GetSsid(i, temp) && strncmp(ssid, temp.ssid, sizeof(temp.ssid)) == 0 &&
+				((chan == 0) || (chan == temp.channel) || (temp.channel == ANY_CHANNEL) || 
+				 (temp.channel == ANY_5G_CHANNEL && chan >= MIN_5G_CHANNEL) || 
+				 (temp.channel == ANY_2G_CHANNEL && chan <= MAX_2G_CHANNEL)))
 			{
 				data = temp;
 				return i;
@@ -375,7 +378,7 @@ bool WirelessConfigurationMgr::BeginEnterpriseSsid(const WirelessConfigurationDa
 	if (total < GetFree() && total < scratchPartition->size)
 	{
 		WirelessConfigurationData temp;
-		int ssid = GetSsid(data.ssid, temp);
+		int ssid = GetSsid(data.ssid, 0, temp);
 
 		if (ssid < 0)
 		{
