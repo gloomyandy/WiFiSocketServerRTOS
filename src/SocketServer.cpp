@@ -379,7 +379,7 @@ static void ConfigureSTAMode()
 	protocols.ghz_5g = WIFI_PROTOCOL_11A|WIFI_PROTOCOL_11N|WIFI_PROTOCOL_11AC|WIFI_PROTOCOL_11AX;
 	ESP_ERROR_CHECK(esp_wifi_set_protocols(WIFI_IF_STA, &protocols));
 #else
-	ESP_ERROR_CHECK(esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N, WIFI_PROTOCOL_11AX ));
+	ESP_ERROR_CHECK(esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_11AX ));
 #endif
 	esp_wifi_set_ps(WIFI_PS_NONE);
 }
@@ -1104,7 +1104,7 @@ extern uint32_t lan87xxOperatingMode;
 void EthInit(uint32_t mode)
 {
 	debugPrintf("Start eth init mode %x\n", mode);
-	//lan87xxOperatingMode = mode;
+	lan87xxOperatingMode = mode;
 #if OLD_SDK
 	ESP_ERROR_CHECK(tcpip_adapter_set_default_eth_handlers());
 #else
