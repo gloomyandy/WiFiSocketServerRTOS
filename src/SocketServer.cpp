@@ -104,9 +104,7 @@ static volatile int currentSsid = -1;
 #if ESP8266
 static_assert(HostNameLength <= CONFIG_TCPIP_ADAPTER_HOSTNAME_MAX_LENGTH);
 #else
-#if OLD_SDK
 static_assert(HostNameLength <= CONFIG_ESP_NETIF_HOSTNAME_MAX_LENGTH);
-#endif
 #endif
 static char webHostName[HostNameLength + 1] = "Duet-WiFi";
 
