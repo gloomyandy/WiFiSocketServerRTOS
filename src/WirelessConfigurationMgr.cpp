@@ -7,9 +7,13 @@
 #include <sys/unistd.h>
 #include "nvs_flash.h"
 #include "esp_spiffs.h"
-#include "spi_flash_mmap.h"
 
 #include "Config.h"
+#if OLD_SDK
+#define ESP_PARTITION_MMAP_DATA SPI_FLASH_MMAP_DATA
+#else
+#include "spi_flash_mmap.h"
+# endif
 #include "Misc.h"
 
 #ifdef ESP8266

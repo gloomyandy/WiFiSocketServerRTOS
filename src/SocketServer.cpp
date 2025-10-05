@@ -379,7 +379,16 @@ static void ConfigureSTAMode()
 	protocols.ghz_5g = WIFI_PROTOCOL_11A|WIFI_PROTOCOL_11N|WIFI_PROTOCOL_11AC|WIFI_PROTOCOL_11AX;
 	ESP_ERROR_CHECK(esp_wifi_set_protocols(WIFI_IF_STA, &protocols));
 #else
-	ESP_ERROR_CHECK(esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_11AX ));
+# if ESP8266
+	// Note: On ESP8266 builds the first call to esp_wifi_set_protocol seems to always fail. I've
+	// no idea why. To avoid the issue on that device we set the options twice.
+	esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+# endif
+	esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N
+# if defined(WIFI_PROTOCOL_11AX)
+	| WIFI_PROTOCOL_11AX
+#endif
+					);
 #endif
 	esp_wifi_set_ps(WIFI_PS_NONE);
 }

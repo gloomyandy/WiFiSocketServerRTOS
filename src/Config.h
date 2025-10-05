@@ -42,6 +42,7 @@ const gpio_num_t SamTfrReadyPin = GPIO_NUM_4;
 const gpio_num_t OnboardLedPin = GPIO_NUM_2;
 const bool LedOffLevel = true;
 const uint32_t defaultClockControl = 0x2002;		// 80MHz/3, mark:space 2:1
+#define OLD_SDK 1
 #else
 
 #if CONFIG_IDF_TARGET_ESP32C3

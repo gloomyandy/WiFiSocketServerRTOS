@@ -44,3 +44,15 @@ if [ -f ./build/DuetWiFiModule_32.bin ]; then
 	mv ./build/DuetWiFiModule_32.bin ${OUTPUT}/WiFiModule_esp32.bin
 fi 
 
+rm -f sdkconfig
+rm -rf build
+cmd << EOFXXX
+set MSYSTEM=
+set MSYS2=
+..\esp-idf\export.bat
+idf.py --preview set-target esp32c5 build
+EOFXXX
+if [ -f ./build/DuetWiFiModule_32.bin ]; then
+	mv ./build/DuetWiFiModule_32.bin ${OUTPUT}/WiFiModule_esp32c5.bin
+fi 
+
