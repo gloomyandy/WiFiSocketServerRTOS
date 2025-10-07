@@ -1210,10 +1210,10 @@ static uint32_t EthGetConnectionSpeed()
 	eth_speed_t speed = ETH_SPEED_100M;
 
 	esp_eth_ioctl(ethHandle, ETH_CMD_G_SPEED, &speed);
-	ret = speed == ETH_SPEED_10M ? 10 : 100;
+	ret = static_cast<uint32_t>(speed == ETH_SPEED_10M ? EspWiFiPhyMode::ETH10F : EspWiFiPhyMode::ETH100F);
 	eth_duplex_t duplex = ETH_DUPLEX_FULL;
 	esp_eth_ioctl(ethHandle, ETH_CMD_G_DUPLEX_MODE, &duplex);
-	ret = ret + (duplex == ETH_DUPLEX_FULL ? 2 : 1);
+	ret = ret + (duplex != ETH_DUPLEX_FULL ? 1 : 0);
 	return ret;
 }
 
@@ -1386,7 +1386,8 @@ void ProcessRequest()
 
 				response->flashSize = flashSize;
 				SafeStrncpy(response->versionText, firmwareVersion, sizeof(response->versionText));
-
+				response->moduleType = static_cast<int>(moduleType);
+debugPrintf("set module type %d\n", response->moduleType);
 				switch (esp_reset_reason())
 				{
 				case ESP_RST_POWERON:
@@ -1477,7 +1478,7 @@ void ProcessRequest()
 						if (ethState >= EthState::started)
 						{
 							SafeStrncpy(response->ssid, ethSSID, strlen(ethSSID)+1);
-							response->rssi = EthGetConnectionSpeed();
+							response->phyMode = EthGetConnectionSpeed();
 						}
 						else							
 #endif

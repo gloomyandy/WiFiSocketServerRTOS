@@ -98,7 +98,11 @@ enum class EspWiFiPhyMode : uint8_t
 	N = 3,
 	A = 4,
 	AC = 5,
-	AX = 6
+	AX = 6,
+	ETH10F = 9,
+	ETH10H = 10,
+	ETH100F = 11,
+	ETH100H = 12
 };
 
 enum class WiFiAuth : uint8_t
@@ -244,6 +248,17 @@ enum class HTMode : uint8_t
 	HT40_BELOW			// 40 Mhz channel width, extra channel below primary channel
 };
 
+enum class ModuleType : uint8_t
+{
+	none = 0,
+	esp8266 = 1,
+	esp32 = 2,
+	esp32eth = 3,
+	esp32s3 = 4,
+	esp32c3 = 5,
+	esp32c5 = 6
+};
+
 // Now the message data formats
 struct NetworkStatusResponse
 {
@@ -255,9 +270,10 @@ struct NetworkStatusResponse
 	int8_t rssi;					// received signal strength (if operating as a wifi client)
 	uint8_t numClients;				// the number of connected clients (if operating as an AP)
 	uint8_t sleepMode : 2,			// the wifi sleep mode, 0 = unknown, 1 = none, 2 = light, 3 = modem
-			phyMode: 3,				// the connection mode to the AP, 1 = B, 2 = G, 3 = N, 4 = A, 5 = AC, 6 = AX
-			zero1 : 3;				// unused, set to zero
-	uint8_t zero2;					// unused, set to zero
+			phyMode: 4,				// the connection mode to the AP, 1 = B, 2 = G, 3 = N, 4 = A, 5 = AC, 6 = AX, 7 = unused,
+									// 8 = unused, 9 = eth 10full, 10 = eth 10half, 11 = 100full, 12 = 100half
+			zero1 : 2;				// unused, set to zero
+	uint8_t moduleType;				// What sort of module are we, see enum ModuleType
 	uint16_t vcc;					// ESP Vcc voltage according to its ADC
     uint8_t macAddress[6];			// MAC address
 	char versionText[16];			// WiFi firmware version, null terminated
