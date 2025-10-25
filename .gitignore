@@ -59,7 +59,6 @@ Bugs.txt
 # RTOS SDK and ESP-IDF
 build
 sdkconfig
-dependencies.lock
 
 # VSCode
 .vscode
