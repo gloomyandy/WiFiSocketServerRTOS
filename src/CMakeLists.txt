@@ -25,6 +25,7 @@ if(NOT SUPPORT_ETHERNET)
     set(SUPPORT_ETHERNET 0)
 endif()
 target_compile_definitions(${COMPONENT_LIB} PRIVATE SUPPORT_ETHERNET=${SUPPORT_ETHERNET})
+target_compile_options(${COMPONENT_LIB} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++17>)
 
 idf_build_get_property(python PYTHON)
 idf_build_get_property(build_dir BUILD_DIR)

@@ -129,6 +129,18 @@ static TaskHandle_t mainTaskHdl;
 static TaskHandle_t connPollTaskHdl;
 static TimerHandle_t tfrReqExpTmr;
 
+#ifdef ESP8266
+// ESP8266 has no clean way for the application to be the sole feeder of the hardware task WDT:
+// esp_internal_idle_hook (port.c) unconditionally calls esp_task_wdt_reset() from the idle task,
+// so as long as idle runs, the WDT is fed regardless of whether main is wedged. Fall back to a
+// software heartbeat checked by the FreeRTOS timer service task. Tradeoff: the timer task is
+// itself software and could in principle also be wedged, but it sits on a different scheduling
+// path from the main task so the common failure mode (main blocked, other tasks fine) is caught
+static volatile uint32_t mainLoopHeartbeat = 0;
+static uint32_t mainLoopHeartbeatLastSeen = 0;
+static TimerHandle_t mainLoopWdtTmr = nullptr;
+#endif
+
 static const char* WIFI_EVENT_EXT = "wifi_event_ext";
 
 static WirelessConfigurationMgr *wirelessConfigMgr;
@@ -1357,6 +1369,12 @@ WiFiAuth EspAuthModeToWiFiAuth(wifi_auth_mode_t authmode)
 // This is called when the SAM is asking to transfer data
 void ProcessRequest()
 {
+	// State for the multi-phase networkAddEnterpriseSsid command. Lives at function scope so
+	// both the in-transaction switch and the deferred switch can read/update it across
+	// successive SPI transactions
+	static bool enterpriseAddPending = false;
+	static int32_t enterpriseAddErr = ResponseEmpty;
+
 	// Set up our own headers
 	messageHeaderIn.hdr.formatVersion = InvalidFormatVersion;
 	messageHeaderIn.hdr.command = NetworkCommand::nullCommand;
@@ -1656,17 +1674,9 @@ debugPrintf("set module type %d\n", response->moduleType);
 		case NetworkCommand::networkConfigureAccessPoint:	// configure our own access point details
 			if (messageHeaderIn.hdr.dataLength == sizeof(WirelessConfigurationData))
 			{
+				deferCommand = true;
 				messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
 				hspi.transferDwords(nullptr, transferBuffer, NumDwords(sizeof(WirelessConfigurationData)));
-				const WirelessConfigurationData *receivedClientData = reinterpret_cast<const WirelessConfigurationData *>(transferBuffer);
-
-				const int ssid = wirelessConfigMgr->SetSsid(*receivedClientData,
-							messageHeaderIn.hdr.command == NetworkCommand::networkConfigureAccessPoint);
-
-				if (ssid < 0)
-				{
-					lastError = "SSID table full";
-				}
 			}
 			else
 			{
@@ -1676,13 +1686,10 @@ debugPrintf("set module type %d\n", response->moduleType);
 
 		case NetworkCommand::networkAddEnterpriseSsid:		// add an enterprise access point
 			{
-				static bool pending = false;
-				static int32_t addErr = false;
-
 				AddEnterpriseSsidFlag flag = static_cast<AddEnterpriseSsidFlag>(messageHeaderIn.hdr.flags);
 				if (flag == AddEnterpriseSsidFlag::SSID) // add ssid info
 				{
-					if (!pending)
+					if (!enterpriseAddPending)
 					{
 						if (messageHeaderIn.hdr.dataLength == sizeof(WirelessConfigurationData))
 						{
@@ -1696,20 +1703,11 @@ debugPrintf("set module type %d\n", response->moduleType);
 								hspi.transferDwords(nullptr, transferBuffer, NumDwords(sizeof(WirelessConfigurationData)));
 								WirelessConfigurationData *newSsid = reinterpret_cast<WirelessConfigurationData*>(transferBuffer);
 								newSsid->eap.protocol = protocol;
-
-								if (wirelessConfigMgr->BeginEnterpriseSsid(*newSsid))
-								{
-									pending = true;
-								}
-								else
-								{
-									addErr = ResponseTooManySsids;
-									lastError = "SSID table full";
-								}
+								deferCommand = true;
 							}
 							else
 							{
-								addErr = ResponseBadParameter;
+								enterpriseAddErr = ResponseBadParameter;
 							}
 						}
 						else
@@ -1724,24 +1722,19 @@ debugPrintf("set module type %d\n", response->moduleType);
 				}
 				else if (flag == AddEnterpriseSsidFlag::CREDENTIAL)
 				{
-					if (pending)
+					if (enterpriseAddPending)
 					{
 						messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
 						memset(transferBuffer, 0, sizeof(transferBuffer));
 						hspi.transferDwords(nullptr, transferBuffer, NumDwords(messageHeaderIn.hdr.dataLength));
-
-						if (!wirelessConfigMgr->SetEnterpriseCredential(messageHeaderIn.hdr.param32,
-								transferBuffer, messageHeaderIn.hdr.dataLength))
-						{
-							pending = false;
-						}
+						deferCommand = true;
 					}
 					else
 					{
-						if (addErr)
+						if (enterpriseAddErr)
 						{
-							SendResponse(addErr);
-							addErr = ResponseEmpty;
+							SendResponse(enterpriseAddErr);
+							enterpriseAddErr = ResponseEmpty;
 						}
 						else
 						{
@@ -1753,23 +1746,17 @@ debugPrintf("set module type %d\n", response->moduleType);
 				{
 					bool cancel = (flag == AddEnterpriseSsidFlag::CANCEL);
 
-					if (cancel || pending)
+					if (cancel || enterpriseAddPending)
 					{
 						messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
-						bool ok = wirelessConfigMgr->EndEnterpriseSsid(flag == AddEnterpriseSsidFlag::CANCEL);
-						pending = false;
-
-						if (!ok || cancel)
-						{
-							lastError = "enterprise SSID not saved";
-						}
+						deferCommand = true;
 					}
 					else
 					{
-						if (addErr)
+						if (enterpriseAddErr)
 						{
-							SendResponse(addErr);
-							addErr = ResponseEmpty;
+							SendResponse(enterpriseAddErr);
+							enterpriseAddErr = ResponseEmpty;
 						}
 						else
 						{
@@ -1787,13 +1774,9 @@ debugPrintf("set module type %d\n", response->moduleType);
 		case NetworkCommand::networkDeleteSsid:				// delete a network from our access point list
 			if (messageHeaderIn.hdr.dataLength == SsidLength)
 			{
+				deferCommand = true;
 				messageHeaderIn.hdr.param32 = hspi.transfer32(ResponseEmpty);
 				hspi.transferDwords(nullptr, transferBuffer, NumDwords(SsidLength));
-
-				if (!wirelessConfigMgr->EraseSsid(reinterpret_cast<const char*>(transferBuffer)))
-				{
-					lastError = "SSID not found";
-				}
 			}
 			else
 			{
@@ -2261,6 +2244,63 @@ debugPrintf("set module type %d\n", response->moduleType);
 			hspi.InitMaster(SPI_MODE1, messageHeaderIn.hdr.param32, true);
 			break;
 
+		case NetworkCommand::networkAddSsid:				// add to our known access point list
+		case NetworkCommand::networkConfigureAccessPoint:	// configure our own access point details
+			{
+				const WirelessConfigurationData *receivedClientData = reinterpret_cast<const WirelessConfigurationData *>(transferBuffer);
+				const int ssid = wirelessConfigMgr->SetSsid(*receivedClientData,
+							messageHeaderIn.hdr.command == NetworkCommand::networkConfigureAccessPoint);
+				if (ssid < 0)
+				{
+					lastError = "SSID table full";
+				}
+			}
+			break;
+
+		case NetworkCommand::networkDeleteSsid:
+			if (!wirelessConfigMgr->EraseSsid(reinterpret_cast<const char*>(transferBuffer)))
+			{
+				lastError = "SSID not found";
+			}
+			break;
+
+		case NetworkCommand::networkAddEnterpriseSsid:
+			{
+				AddEnterpriseSsidFlag flag = static_cast<AddEnterpriseSsidFlag>(messageHeaderIn.hdr.flags);
+				if (flag == AddEnterpriseSsidFlag::SSID)
+				{
+					const WirelessConfigurationData *newSsid = reinterpret_cast<const WirelessConfigurationData *>(transferBuffer);
+					if (wirelessConfigMgr->BeginEnterpriseSsid(*newSsid))
+					{
+						enterpriseAddPending = true;
+					}
+					else
+					{
+						enterpriseAddErr = ResponseTooManySsids;
+						lastError = "SSID table full";
+					}
+				}
+				else if (flag == AddEnterpriseSsidFlag::CREDENTIAL)
+				{
+					if (!wirelessConfigMgr->SetEnterpriseCredential(messageHeaderIn.hdr.param32,
+							transferBuffer, messageHeaderIn.hdr.dataLength))
+					{
+						enterpriseAddPending = false;
+					}
+				}
+				else if (flag == AddEnterpriseSsidFlag::COMMIT || flag == AddEnterpriseSsidFlag::CANCEL)
+				{
+					const bool cancel = (flag == AddEnterpriseSsidFlag::CANCEL);
+					const bool ok = wirelessConfigMgr->EndEnterpriseSsid(cancel);
+					enterpriseAddPending = false;
+					if (!ok || cancel)
+					{
+						lastError = "enterprise SSID not saved";
+					}
+				}
+			}
+			break;
+
 		default:
 			lastError = "bad deferred command";
 			break;
@@ -2374,6 +2414,37 @@ void setup()
 		});
 	xTimerStart(tfrReqExpTmr, portMAX_DELAY);
 
+#ifdef ESP8266
+	mainLoopWdtTmr = xTimerCreate("mainLoopWdt", pdMS_TO_TICKS(MAIN_TASK_WDT_MS), pdTRUE, NULL,
+		[](TimerHandle_t data) {
+			const uint32_t current = mainLoopHeartbeat;
+			if (current == mainLoopHeartbeatLastSeen)
+			{
+				debugPrintfAlways("Main loop watchdog timeout (no tick in %u ms), restarting\n",
+					(unsigned)MAIN_TASK_WDT_MS);
+				esp_restart();
+			}
+			mainLoopHeartbeatLastSeen = current;
+		});
+	xTimerStart(mainLoopWdtTmr, portMAX_DELAY);
+#else
+	// Hardware-backed task WDT with main task as the only subscriber. Idle-task subscription is
+	// disabled in sdkconfig.defaults.<target> so a healthy idle task cannot mask a wedged main
+#if OLD_SDK
+	esp_task_wdt_init(MAIN_TASK_WDT_MS / 1000, true);
+#else
+	// If the TWDT was not initialized automatically on startup, manually intialize it now
+	esp_task_wdt_config_t twdt_config = {
+		.timeout_ms = MAIN_TASK_WDT_MS,
+		.idle_core_mask = 0, // No idle tasks subscribed
+		.trigger_panic = true,
+    };
+    ESP_ERROR_CHECK(esp_task_wdt_init(&twdt_config));
+    printf("TWDT initialized\n");
+#endif
+	esp_task_wdt_add(NULL);
+#endif
+
 	// Setup networking
 	Connection::Init();
 
@@ -2388,6 +2459,12 @@ void setup()
 
 void loop()
 {
+#ifdef ESP8266
+	++mainLoopHeartbeat;	// fed to mainLoopWdtTmr, see setup()
+#else
+	esp_task_wdt_reset();
+#endif
+
 	// See whether there is a request from the SAM.
 	// Duet WiFi 1.04 and earlier have hardware to ensure that TransferReady goes low when a transaction starts.
 	// Duet 3 Mini doesn't, so we need to see TransferReady go low and then high again. In case that happens so fast that we dn't get the interrupt, we have a timeout.
