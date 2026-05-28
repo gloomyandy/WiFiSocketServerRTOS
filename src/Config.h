@@ -3,7 +3,7 @@
 #ifndef CONFIG_H_INCLUDED
 #define CONFIG_H_INCLUDED
 
-#define VERSION_MAIN	"3.0.0-beta.1"
+#define VERSION_MAIN	"3.0.0-beta.2"
 
 #ifdef DEBUG
 #define VERSION_DEBUG	"-D"
@@ -127,6 +127,9 @@ const uint8_t Backlog = 8;
 #define TCP_LISTENER_PRIO						(ESP_TASK_TCPIP_PRIO)
 #define DNS_SERVER_PRIO							(ESP_TASK_MAIN_PRIO)
 
+#ifdef DEBUG
+#define STATE_PRINT_STACK						(2048)
+#endif
 
 #ifdef ESP8266
 #define WIFI_CONNECTION_STACK					(1492)

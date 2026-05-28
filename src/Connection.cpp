@@ -376,12 +376,14 @@ void Connection::Report()
 
 /*static*/ void Connection::Init()
 {
-	allocateMutex = xSemaphoreCreateMutex();
+	//allocateMutex = xSemaphoreCreateMutex();
 
 	for (size_t i = 0; i < MaxConnections; ++i)
 	{
 		connectionList[i] = new Connection((uint8_t)i);
 	}
+	allocateMutex = xSemaphoreCreateMutex();
+
 }
 
 /*static*/ void Connection::PollAll()
@@ -403,6 +405,7 @@ void Connection::Report()
 
 /*static*/ void Connection::ReportConnections()
 {
+	if (allocateMutex == nullptr) return;
 	ets_printf("Conns");
 	for (size_t i = 0; i < MaxConnections; ++i)
 	{
@@ -414,6 +417,7 @@ void Connection::Report()
 
 /*static*/ void Connection::GetSummarySocketStatus(uint16_t& connectedSockets, uint16_t& otherEndClosedSockets)
 {
+	if (allocateMutex == nullptr) return;
 	connectedSockets = 0;
 	otherEndClosedSockets = 0;
 	for (size_t i = 0; i < MaxConnections; ++i)

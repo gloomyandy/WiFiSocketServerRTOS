@@ -22,6 +22,7 @@ extern "C"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "freertos/task.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #if SUPPORT_ETHERNET
@@ -36,6 +37,7 @@ extern "C"
 #include "mdns.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "esp_timer.h"
 
 #include "led_indicator.h"
 
@@ -107,6 +109,11 @@ static_assert(HostNameLength <= CONFIG_TCPIP_ADAPTER_HOSTNAME_MAX_LENGTH);
 static_assert(HostNameLength <= CONFIG_ESP_NETIF_HOSTNAME_MAX_LENGTH);
 #endif
 static char webHostName[HostNameLength + 1] = "Duet-WiFi";
+
+#ifdef DEBUG
+static NetworkCommand lastCommand = NetworkCommand::nullCommand;
+static uint32_t commandsProcessed = 0;
+#endif
 
 static DNSServer dns;
 
@@ -210,6 +217,58 @@ bool ValidSocketNumber(uint8_t num)
 	lastError = "socket number out of range";
 	return false;
 }
+
+#ifdef DEBUG
+static void StatePrintTask(void* data)
+{
+	while (true)
+	{
+		printf("----------------------diagnostics---------------------\n");
+		printf("last_network_command: %u\n", static_cast<unsigned>(lastCommand));
+		printf("network_commands_processed: %u\n", (unsigned)commandsProcessed);
+		printf("uptime_ms: %lu\n", millis());
+		printf("os_ticks: %u\n", (unsigned)xTaskGetTickCount());
+		printf("free_heap: %u\n", (unsigned)esp_get_free_heap_size());
+		printf("last_reset_reason: %u\n", (unsigned)esp_reset_reason());
+
+		printf("wifi_state: %u\n", static_cast<unsigned>(currentState));
+
+		if (currentState == WiFiState::connected || currentState == WiFiState::runningAsAccessPoint)
+		{
+#if OLD_SDK
+					tcpip_adapter_ip_info_t ip_info;
+#if SUPPORT_ETHERNET
+					tcpip_adapter_get_ip_info((currentState == WiFiState::connected) ? (ethState >= EthState::started ? TCPIP_ADAPTER_IF_ETH : TCPIP_ADAPTER_IF_STA) : TCPIP_ADAPTER_IF_AP, &ip_info);
+#else
+					tcpip_adapter_get_ip_info((currentState == WiFiState::connected) ? TCPIP_ADAPTER_IF_STA : TCPIP_ADAPTER_IF_AP, &ip_info);
+#endif
+#else
+					esp_netif_ip_info_t ip_info;
+#if SUPPORT_ETHERNET
+					esp_netif_get_ip_info((currentState == WiFiState::connected) ? (ethState >= EthState::started ? eth_netif : sta_netif) : ap_netif, &ip_info);
+#else
+					esp_netif_get_ip_info((currentState == WiFiState::connected) ? sta_netif : ap_netif, &ip_info);
+#endif
+#endif
+			uint8_t *ip = reinterpret_cast<uint8_t*>(&ip_info.ip.addr);
+			printf("ip_addr: %u.%u.%u.%u\n", (unsigned)ip[0], (unsigned)ip[1], (unsigned)ip[2], (unsigned)ip[3]);
+
+			ip = reinterpret_cast<uint8_t*>(&ip_info.netmask.addr);
+			printf("netmask: %u.%u.%u.%u\n", (unsigned)ip[0], (unsigned)ip[1], (unsigned)ip[2], (unsigned)ip[3]);
+
+			ip = reinterpret_cast<uint8_t*>(&ip_info.gw.addr);
+			printf("gateway: %u.%u.%u.%u\n", (unsigned)ip[0], (unsigned)ip[1], (unsigned)ip[2], (unsigned)ip[3]);
+		}
+
+		uint16_t connected, otherEndClosed;
+		Connection::GetSummarySocketStatus(connected, otherEndClosed);
+		printf("connected_sockets: 0x%x other_end_closed_sockets: 0x%x\n", connected, otherEndClosed);
+		Connection::ReportConnections();
+		printf("------------------------------------------------------\n");
+		vTaskDelay(pdMS_TO_TICKS(250));
+	}
+}
+#endif
 
 static inline bool isFirstConnectWorkaround()
 {
@@ -1311,6 +1370,10 @@ void ProcessRequest()
 	messageHeaderOut.hdr.state = currentState;
 	bool deferCommand = false;
 
+#ifdef DEBUG
+	lastCommand = NetworkCommand::nullCommand;
+#endif
+
 	// Begin the transaction
 	gpio_set_level(SamSSPin, 0);		// assert CS to SAM
 	hspi.beginTransaction();
@@ -1332,6 +1395,11 @@ void ProcessRequest()
 	else
 	{
 		const size_t dataBufferAvailable = std::min<size_t>(messageHeaderIn.hdr.dataBufferAvailable, MaxDataLength);
+
+#ifdef DEBUG
+		lastCommand = messageHeaderIn.hdr.command;
+		commandsProcessed++;
+#endif
 
 		// See what command we have received and take appropriate action
 		switch (messageHeaderIn.hdr.command)
@@ -2026,6 +2094,7 @@ debugPrintf("set module type %d\n", response->moduleType);
 		case NetworkCommand::diagnostics:					// print some debug info over the UART line
 			SendResponse(ResponseEmpty);
 			deferCommand = true;							// we need to send the diagnostics after we have sent the response, so the SAM is ready to receive them
+
 			break;
 
 		case NetworkCommand::networkSetTxPower:
@@ -2263,6 +2332,10 @@ void setup()
 
 
 	xTaskCreate(WiFiConnectionTask, "wifiConnection", WIFI_CONNECTION_STACK, NULL, WIFI_CONNECTION_PRIO, &connPollTaskHdl);
+
+#ifdef DEBUG
+	//xTaskCreate(StatePrintTask, "statePrint", STATE_PRINT_STACK, NULL, tskIDLE_PRIORITY, NULL);
+#endif
 
 	esp_log_level_set("wifi", ESP_LOG_NONE);
 
