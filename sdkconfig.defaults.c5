@@ -4,3 +4,10 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240
 CONFIG_ESP32C5_REV_MIN_0=y
 # Use following if boot has debug enabled will also need alternate partiion table
 #CONFIG_PARTITION_TABLE_OFFSET=0x10000
+# Task watchdog: armed at runtime with main task as the only subscriber.
+# Idle-task subscription is disabled so a healthy idle task cannot mask a wedged main.
+CONFIG_ESP_TASK_WDT_EN=y
+CONFIG_ESP_TASK_WDT_INIT=n
+CONFIG_ESP_TASK_WDT_PANIC=y
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=n
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
