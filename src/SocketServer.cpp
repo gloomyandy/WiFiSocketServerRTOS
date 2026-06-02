@@ -719,7 +719,18 @@ pre(currentState == WiFiState::idle)
 
 	if (ssidIdx <= 0)
 	{
-		lastError = "no known networks found";
+		if (ssid != nullptr)
+		{
+			static char requestedNetworkError[SsidLength + 40];
+			SafeStrncpy(requestedNetworkError, "requested network '", ARRAY_SIZE(requestedNetworkError));
+			SafeStrncat(requestedNetworkError, ssid, ARRAY_SIZE(requestedNetworkError));
+			SafeStrncat(requestedNetworkError, "' not found", ARRAY_SIZE(requestedNetworkError));
+			lastError = requestedNetworkError;
+		}
+		else
+		{
+			lastError = "no known networks found";
+		}
 		return;
 	}
 
