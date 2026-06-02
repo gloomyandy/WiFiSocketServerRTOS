@@ -171,6 +171,12 @@ static volatile wifi_scan_state_t scanState = WIFI_SCAN_IDLE;
 static wifi_ap_record_t *wifiScanAPs = nullptr;
 static uint16_t wifiScanNum = 0;
 
+// Signals that the station has finished starting after esp_wifi_start(), set from
+// the WIFI_EVENT_STA_START handler and waited on before issuing a scan
+static EventGroupHandle_t wifiEventGroup = nullptr;
+static constexpr EventBits_t STA_STARTED_BIT = BIT0;
+static constexpr uint32_t StaStartTimeoutMs = 5000;
+
 // Reset to default settings
 void FactoryReset()
 {
@@ -355,6 +361,9 @@ static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 			break;
 		}
 
+	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+		xEventGroupSetBits(wifiEventGroup, STA_STARTED_BIT);
+		return; // do not send an event
 	} else if (event_base == WIFI_EVENT && (event_id == WIFI_EVENT_STA_STOP || event_id == WIFI_EVENT_AP_STOP)) {
 		wifiEvt = WIFI_IDLE;
 	} else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
@@ -381,6 +390,20 @@ static void ConfigureSTAMode()
 	esp_wifi_set_mode(WIFI_MODE_STA);
 	esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
 	esp_wifi_set_ps(WIFI_PS_NONE);
+}
+
+// Start the station and block until it is ready. esp_wifi_start() brings the station up
+// asynchronously; the radio cannot scan until WIFI_EVENT_STA_START has fired. Scanning
+// before then returns zero APs, so the caller must wait for the station to come up first.
+static bool StartStation()
+{
+	xEventGroupClearBits(wifiEventGroup, STA_STARTED_BIT);
+	if (esp_wifi_start() != ESP_OK)
+	{
+		return false;
+	}
+	return (xEventGroupWaitBits(wifiEventGroup, STA_STARTED_BIT, pdFALSE, pdTRUE,
+								pdMS_TO_TICKS(StaStartTimeoutMs)) & STA_STARTED_BIT) != 0;
 }
 
 // Rebuild the mDNS services
@@ -607,7 +630,12 @@ void WiFiConnectionTask(void* data)
 int ScanForNetworks(const char *reqSsid, uint8_t mac[6], int8_t &channel, WirelessConfigurationData &wp)
 {
 	ConfigureSTAMode();
-	esp_wifi_start();
+	if (!StartStation())
+	{
+		esp_wifi_stop();
+		lastError = "failed to start WiFi";
+		return -1;
+	}
 
 	wifi_scan_config_t cfg;
 	memset(&cfg, 0, sizeof(cfg));
@@ -815,7 +843,12 @@ pre(currentState == WiFiState::idle)
 		tcpip_adapter_dhcpc_start(TCPIP_ADAPTER_IF_STA);
 	}
 
-	esp_wifi_start();
+	if (!StartStation())
+	{
+		esp_wifi_stop();
+		lastError = "failed to start WiFi";
+		return;
+	}
 
 	// ssidData contains the details of the strongest known access point
 	debugPrintf("Trying to connect to ssid \"%s\" with password \"%s\"\n", wp.ssid, wp.password);
@@ -1818,7 +1851,10 @@ void ProcessRequest()
 			// If currently idle, start Wi-Fi in STA mode
 			if (currentState == WiFiState::idle) {
 				ConfigureSTAMode();
-				esp_wifi_start();
+				if (!StartStation()) {
+					lastError = "failed to start WiFi";
+					break;
+				}
 			}
 
 			if (esp_wifi_scan_start(&cfg, false) == ESP_OK) {
@@ -1941,7 +1977,10 @@ void setup()
 
 	esp_event_loop_create_default();
 
+	wifiEventGroup = xEventGroupCreate();
+
 	esp_event_handler_register(WIFI_EVENT_EXT, WIFI_EVENT_STA_CONNECTING, &HandleWiFiEvent, NULL);
+	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_START, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_CONNECTED, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &HandleWiFiEvent, NULL);
 	esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_STOP, &HandleWiFiEvent, NULL);
