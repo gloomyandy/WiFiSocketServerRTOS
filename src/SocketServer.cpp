@@ -73,7 +73,11 @@ extern esp_rom_spiflash_chip_t g_rom_flashchip;
 #include "esp_flash.h"
 #endif
 
+#if OLD_SDK
+#include "esp_wpa2.h"
+#else
 #include "esp_eap_client.h"
+#endif
 
 
 static_assert(WIFI_CONNECTION_PRIO == MAIN_PRIO);
