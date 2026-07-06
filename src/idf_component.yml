@@ -15,3 +15,4 @@ dependencies:
   #   # All dependencies of `main` are public by default.
   #   public: true
   espressif/mdns: ^1.0.7
+  espressif/lan87xx: ^1.0.0

@@ -27,6 +27,9 @@ extern "C"
 #include "esp_wifi.h"
 #if SUPPORT_ETHERNET
 #include "esp_eth.h"
+#if !OLD_SDK
+#include "esp_eth_phy_lan87xx.h"
+#endif
 #endif
 #include "esp_event.h"
 #include "esp_system.h"
@@ -1295,6 +1298,8 @@ void EthInit(uint32_t mode)
 	esp32_emac_config.smi_gpio.mdc_num = 23;
 	esp32_emac_config.smi_gpio.mdio_num = 18;
 	esp32_emac_config.dma_burst_len = ETH_DMA_BURST_LEN_16;
+	esp32_emac_config.clock_config.rmii.clock_mode = EMAC_CLK_OUT;
+	esp32_emac_config.clock_config.rmii.clock_gpio = 17;
 	esp_eth_mac_t *mac = esp_eth_mac_new_esp32(&esp32_emac_config, &mac_config);
 	esp_eth_phy_t *phy = esp_eth_phy_new_lan87xx(&phy_config);
 #endif
