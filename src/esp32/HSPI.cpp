@@ -31,6 +31,7 @@
 
 #include "HSPI.h"
 #include "Config.h"
+#include "freertos/FreeRTOS.h"
 
 /* STM32 Port notes:
    For some reason using the original Duet3D SPI configuration results in sperodic data corruption,

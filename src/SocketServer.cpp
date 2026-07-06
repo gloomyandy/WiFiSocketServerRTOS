@@ -70,7 +70,7 @@ extern esp_rom_spiflash_chip_t g_rom_flashchip;
 #include "esp_flash.h"
 #endif
 
-#include "esp_wpa2.h"
+#include "esp_eap_client.h"
 
 
 static_assert(WIFI_CONNECTION_PRIO == MAIN_PRIO);
@@ -334,7 +334,9 @@ static void HandleWiFiEvent(void* arg, esp_event_base_t event_base,
 			case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
 			case WIFI_REASON_AUTH_FAIL:
 			case WIFI_REASON_ASSOC_FAIL:
+#if OLD_SDK
 			case WIFI_REASON_ASSOC_EXPIRE:
+#endif
 			case WIFI_REASON_HANDSHAKE_TIMEOUT:
 			case WIFI_REASON_802_1X_AUTH_FAILED:
 				wifiEvt = STATION_WRONG_PASSWORD;
@@ -840,10 +842,7 @@ pre(currentState == WiFiState::idle)
 		std::min(sizeof(wifi_config.sta.ssid), sizeof(wp.ssid)));
 
 #ifndef ESP8266
-#if SUPPORT_5G
-	wifi_config.sta.channel = channel;
-	wifi_config.sta.bssid_set = true;
-#else
+#if OLD_SDK
 	if (channel >= 0 && channel <= 13)
 	{
 		wifi_config.sta.channel = channel;
@@ -852,6 +851,9 @@ pre(currentState == WiFiState::idle)
 	{
 		wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
 	}
+#else
+	wifi_config.sta.channel = channel;
+	wifi_config.sta.bssid_set = true;
 #endif
 #else
 	// Workaround for ESP8266, which seems to ignore the channel argument,
@@ -870,17 +872,28 @@ pre(currentState == WiFiState::idle)
 	// Clear all credentials, even if requested network is not WPA2-Enterprise.
 	// Without this, connection to the same WPA2-Enterprise network with
 	// PSK credentials will succeed.
+#if OLD_SDK
 	esp_wifi_sta_wpa2_ent_disable();
 	esp_wifi_sta_wpa2_ent_clear_identity();
 	esp_wifi_sta_wpa2_ent_clear_ca_cert();
 	esp_wifi_sta_wpa2_ent_clear_cert_key();
 	esp_wifi_sta_wpa2_ent_clear_username();
 	esp_wifi_sta_wpa2_ent_clear_password();
-
 #ifndef ESP8266
 	esp_wifi_sta_wpa2_ent_clear_new_password();
 #endif
+#else
+	esp_wifi_sta_enterprise_disable();
+	esp_eap_client_clear_identity();
+	esp_eap_client_clear_ca_cert();
+	esp_eap_client_clear_certificate_and_key();
+	esp_eap_client_clear_username();
+	esp_eap_client_clear_password();
 
+#ifndef ESP8266
+	esp_eap_client_clear_new_password();
+#endif
+#endif
 	if (wp.eap.protocol != EAPProtocol::NONE)
 	{
 		CredentialsInfo offsets;
@@ -896,12 +909,20 @@ pre(currentState == WiFiState::idle)
 
 		if (sizes.asMemb.anonymousId)
 		{
+#if OLD_SDK
 			esp_wifi_sta_wpa2_ent_set_identity(base + offsets.asMemb.anonymousId, sizes.asMemb.anonymousId);
+#else
+			esp_eap_client_set_identity(base + offsets.asMemb.anonymousId, sizes.asMemb.anonymousId);
+#endif
 		}
 
 		if (sizes.asMemb.caCert)
 		{
+#if OLD_SDK
 			esp_wifi_sta_wpa2_ent_set_ca_cert(base + offsets.asMemb.caCert, sizes.asMemb.caCert);
+#else
+			esp_eap_client_set_ca_cert(base + offsets.asMemb.caCert, sizes.asMemb.caCert);
+#endif
 		}
 
 		if (wp.eap.protocol == EAPProtocol::EAP_TLS)
@@ -911,19 +932,33 @@ pre(currentState == WiFiState::idle)
 			{
 				privateKeyPswd = base + offsets.asMemb.tls.privateKeyPswd;
 			}
-
+#if OLD_SDK
 			esp_wifi_sta_wpa2_ent_set_cert_key(base + offsets.asMemb.tls.userCert, sizes.asMemb.tls.userCert,
 											base + offsets.asMemb.tls.privateKey, sizes.asMemb.tls.privateKey,
 											privateKeyPswd, sizes.asMemb.tls.privateKeyPswd);
+#else
+			esp_eap_client_set_certificate_and_key(base + offsets.asMemb.tls.userCert, sizes.asMemb.tls.userCert,
+											base + offsets.asMemb.tls.privateKey, sizes.asMemb.tls.privateKey,
+											privateKeyPswd, sizes.asMemb.tls.privateKeyPswd);
+#endif
 		}
 		else if (wp.eap.protocol == EAPProtocol::EAP_PEAP_MSCHAPV2 || wp.eap.protocol == EAPProtocol::EAP_TTLS_MSCHAPV2)
 		{
+#if OLD_SDK
 			esp_wifi_sta_wpa2_ent_set_username(base + offsets.asMemb.peapttls.identity, sizes.asMemb.peapttls.identity);
 			esp_wifi_sta_wpa2_ent_set_password(base + offsets.asMemb.peapttls.password, sizes.asMemb.peapttls.password);
+#else
+			esp_eap_client_set_username(base + offsets.asMemb.peapttls.identity, sizes.asMemb.peapttls.identity);
+			esp_eap_client_set_password(base + offsets.asMemb.peapttls.password, sizes.asMemb.peapttls.password);
+#endif
 #ifndef ESP8266
 			if (wp.eap.protocol == EAPProtocol::EAP_TTLS_MSCHAPV2)
 			{
+#if OLD_SDK
 				esp_wifi_sta_wpa2_ent_set_ttls_phase2_method(ESP_EAP_TTLS_PHASE2_MSCHAPV2);
+#else
+				esp_eap_client_set_ttls_phase2_method(ESP_EAP_TTLS_PHASE2_MSCHAPV2);
+#endif
 			}
 #endif
 		}
@@ -933,7 +968,11 @@ pre(currentState == WiFiState::idle)
 			return;
 		}
 
+#if OLD_SDK
 		esp_wifi_sta_wpa2_ent_enable();
+#else
+		esp_wifi_sta_enterprise_enable();
+#endif
 	}
 
 	memset(&staIpInfo, 0, sizeof(staIpInfo));
@@ -1056,7 +1095,11 @@ void StartAccessPoint()
 				std::min(sizeof(wifi_config.ap.ssid), sizeof(apData.ssid)));
 			SafeStrncpy((char*)wifi_config.ap.password, (char*)apData.password,
 				std::min(sizeof(wifi_config.ap.password), sizeof(apData.password)));
+#if OLD_SDK
 			wifi_config.ap.authmode = WIFI_AUTH_WPA_WPA2_PSK;
+#else
+			wifi_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
+#endif
 			wifi_config.ap.channel = (apData.channel == 0) ? DefaultWiFiChannel : apData.channel;
 			wifi_config.ap.max_connection = MaxAPConnections;
 

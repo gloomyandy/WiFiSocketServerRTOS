@@ -416,7 +416,9 @@ bool WirelessConfigurationMgr::SetEnterpriseCredential(int cred, const void* buf
 		if (newSize <= pendingSsid->data.eap.credSizes.asArr[cred])
 		{
 			char key[MAX_KEY_LEN] = { 0 };
-			if (SetKV(GetCredentialKey(key, pendingSsid->ssid, cred), buff, size, pendingSsid->sizes.asArr[cred]))
+			size_t sz = pendingSsid->sizes.asArr[cred];
+//			if (SetKV(GetCredentialKey(key, pendingSsid->ssid, cred), buff, size, pendingSsid->sizes.asArr[cred]))
+			if (SetKV(GetCredentialKey(key, pendingSsid->ssid, cred), buff, size, sz))
 			{
 				pendingSsid->sizes.asArr[cred] = newSize;
 				return true;

@@ -18,7 +18,7 @@ endif()
 
 idf_component_register(SRCS "${srcs}"
                        INCLUDE_DIRS "${include_dirs}"
-                       REQUIRES spi_flash driver esp_timer esp_netif esp_eth esp_phy esp_wifi lwip
+                       REQUIRES spi_flash driver esp_timer esp_netif esp_eth esp_phy esp_wifi lwip esp_driver_gpio
                        PRIV_REQUIRES indicator nvs_flash wpa_supplicant spiffs)
 
 if(NOT SUPPORT_ETHERNET)
