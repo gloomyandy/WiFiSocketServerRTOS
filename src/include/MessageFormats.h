@@ -368,6 +368,7 @@ const int32_t ResponseBadParameter = -11;
 const int32_t ResponseNoScanStarted = -12;
 const int32_t ResponseScanInProgress = -13;
 const int32_t ResponseUnknownError = -14;
+const int32_t ResponseNoTlsCert = -15;			// networkEnableTls: no cert/key stored on this WiFi module
 
 const size_t MaxRememberedNetworks = 20;
 static_assert((MaxRememberedNetworks + 1) * ReducedWirelessConfigurationDataSize <= MaxDataLength, "Too many remembered networks");

@@ -7,19 +7,21 @@ set(srcs "Misc.cpp"
          "DNSServer.cpp"
          "WirelessConfigurationMgr.cpp")
 set(include_dirs ".")
+set(priv_requires indicator nvs_flash wpa_supplicant spiffs)
 
 if(IDF_TARGET STREQUAL "esp8266")
      list(APPEND srcs "esp8266/gpio.c" "esp8266/partition.c" "esp8266/HSPI.cpp")
      list(APPEND include_dirs "esp8266")
 else()
-     list(APPEND srcs "esp32/HSPI.cpp")
+     list(APPEND srcs "esp32/HSPI.cpp" "TlsServer.cpp")
      list(APPEND include_dirs "esp32")
+     list(APPEND priv_requires mbedtls)
 endif()
 
 idf_component_register(SRCS "${srcs}"
                        INCLUDE_DIRS "${include_dirs}"
                        REQUIRES spi_flash driver esp_timer esp_netif esp_eth esp_phy esp_wifi lwip esp_driver_gpio
-                       PRIV_REQUIRES indicator nvs_flash wpa_supplicant spiffs)
+                       PRIV_REQUIRES "${priv_requires}")
 
 if(NOT SUPPORT_ETHERNET)
     set(SUPPORT_ETHERNET 0)
