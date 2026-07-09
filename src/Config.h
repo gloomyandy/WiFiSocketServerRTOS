@@ -11,7 +11,7 @@
 #define VERSION_DEBUG	""
 #endif
 
-#include "include/MessageFormats.h"
+//#include "include/MessageFormats.h"
 #include "driver/gpio.h"
 
 const char* const firmwareVersion = VERSION_MAIN VERSION_DEBUG;
@@ -53,7 +53,6 @@ const gpio_num_t SamTfrReadyPin = GPIO_NUM_4;
 const gpio_num_t OnboardLedPin = GPIO_NUM_2;
 const bool LedOffLevel = true;
 const uint32_t defaultClockControl = 0x2002;		// 80MHz/3, mark:space 2:1
-const ModuleType moduleType = ModuleType::esp8266;
 #define OLD_SDK 1
 #else
 
@@ -64,7 +63,6 @@ const gpio_num_t SamTfrReadyPin = GPIO_NUM_10;
 const gpio_num_t OnboardLedPin = GPIO_NUM_8;
 const bool LedOffLevel = true;
 const uint32_t defaultClockControl = 0x2002;		// 80MHz/3, mark:space 2:1
-const ModuleType moduleType = ModuleType::esp32c3;
 #elif CONFIG_IDF_TARGET_ESP32S3
 const gpio_num_t SamSSPin = GPIO_NUM_10;
 const gpio_num_t EspReqTransferPin = GPIO_NUM_0;
@@ -72,7 +70,6 @@ const gpio_num_t SamTfrReadyPin = GPIO_NUM_8;
 const bool LedOffLevel = true;
 const gpio_num_t OnboardLedPin = GPIO_NUM_6;
 const uint32_t defaultClockControl = 0x2002;		// 80MHz/3, mark:space 2:1
-const ModuleType moduleType = ModuleType::esp32s3;
 #elif CONFIG_IDF_TARGET_ESP32
 # if SUPPORT_ETHERNET
 #  if ETH_V0
@@ -87,7 +84,6 @@ const gpio_num_t SamSSPin = GPIO_NUM_2;
 const gpio_num_t SamTfrReadyPin = GPIO_NUM_5;
 const bool LedOffLevel = true;
 const uint32_t defaultClockControl = 0x2003;		// 80MHz/4, mark:space 2:1
-const ModuleType moduleType = ModuleType::esp32eth;
 # else
 const gpio_num_t SamSSPin = GPIO_NUM_5;
 const gpio_num_t EspReqTransferPin = GPIO_NUM_0;
@@ -95,7 +91,6 @@ const gpio_num_t SamTfrReadyPin = GPIO_NUM_4;
 const gpio_num_t OnboardLedPin = GPIO_NUM_32;
 const bool LedOffLevel = false;
 const uint32_t defaultClockControl = 0x2003;		// 80MHz/4, mark:space 2:1
-const ModuleType moduleType = ModuleType::esp32;
 # endif
 #elif CONFIG_IDF_TARGET_ESP32C5
 const gpio_num_t SamSSPin = GPIO_NUM_10;
@@ -104,7 +99,6 @@ const gpio_num_t SamTfrReadyPin = GPIO_NUM_27;
 const gpio_num_t OnboardLedPin = GPIO_NUM_25;
 const bool LedOffLevel = false;
 const uint32_t defaultClockControl = 0x2003;		// 80MHz/4, mark:space 2:1
-const ModuleType moduleType = ModuleType::esp32c5;
 #else
 #error "pins not specifed for target chip"
 #endif
@@ -121,8 +115,10 @@ const uint8_t Backlog = 8;
 #define DEBUG
 #ifdef DEBUG
 #include "rom/ets_sys.h"
-#define debugPrint(_str)			ets_printf("%s(%d): %s", __FILE__, __LINE__, _str)
-#define debugPrintf(_format, ...)	ets_printf("%s(%d): ", __FILE__, __LINE__); ets_printf(_format, __VA_ARGS__)
+//#define debugPrint(_str)			ets_printf("%s(%d): %s", __FILE__, __LINE__, _str)
+#define debugPrint(_str)			ets_printf(_str)
+//#define debugPrintf(_format, ...)	ets_printf("%s(%d): ", __FILE__, __LINE__); ets_printf(_format, __VA_ARGS__)
+#define debugPrintf(_format, ...)	ets_printf(_format, __VA_ARGS__)
 #else
 #define debugPrint(_format)			do {} while(false)
 #define debugPrintf(_format, ...)	do {} while(false)

@@ -21,8 +21,10 @@
 #include "lwip/api.h"
 
 #include "mbedtls/ssl.h"
+#if OLD_SDK
 #include "mbedtls/entropy.h"
 #include "mbedtls/ctr_drbg.h"
+#endif
 #include "mbedtls/x509_crt.h"
 #include "mbedtls/pk.h"
 
@@ -94,8 +96,10 @@ private:
 	mbedtls_ssl_config conf;
 	mbedtls_x509_crt cert;
 	mbedtls_pk_context key;
+#if OLD_SDK
 	mbedtls_entropy_context entropy;
 	mbedtls_ctr_drbg_context ctrDrbg;
+#endif
 };
 
 #endif // SUPPORTS_TLS

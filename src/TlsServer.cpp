@@ -1,8 +1,8 @@
 /*
  * TlsServer.cpp
  */
-
-#include "Config.h"					// for SUPPORTS_TLS
+#include <cstddef>
+#include "Config.h"				 // for SUPPORTS_TLS
 
 #if SUPPORTS_TLS
 
@@ -27,12 +27,9 @@ TlsServer::TlsServer()
 	mbedtls_ssl_config_init(&conf);
 	mbedtls_x509_crt_init(&cert);
 	mbedtls_pk_init(&key);
-	mbedtls_entropy_init(&entropy);
-	mbedtls_ctr_drbg_init(&ctrDrbg);
-
-	static const char personalisation[] = "duet-wifi-tls";
-	mbedtls_ctr_drbg_seed(&ctrDrbg, mbedtls_entropy_func, &entropy,
-		reinterpret_cast<const unsigned char *>(personalisation), sizeof(personalisation) - 1);
+	
+	// NOTE: All entropy and CTR-DRBG initialization and custom seeding 
+	// are removed because mbedTLS 4.0 / PSA Crypto manages this globally.
 }
 
 bool TlsServer::Enable()
@@ -67,7 +64,7 @@ bool TlsServer::Enable()
 
 	if (ok)
 	{
-		// ESP-IDF v4.x mbedTLS uses the older 5-argument signature (no RNG callback)
+		// mbedTLS 4.x uses a 5-argument key parser where internal PSA handles RNG.
 		rc = mbedtls_pk_parse_key(&key, keyBuf, keyLen, nullptr, 0);
 		if (rc != 0)
 		{
@@ -89,7 +86,8 @@ bool TlsServer::Enable()
 
 	if (ok)
 	{
-		mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &ctrDrbg);
+		// NOTE: mbedtls_ssl_conf_rng() is completely removed in v4.x. 
+		// The framework automatically binds the configuration to PSA Crypto random pools.
 		rc = mbedtls_ssl_conf_own_cert(&conf, &cert, &key);
 		if (rc != 0)
 		{
@@ -104,12 +102,22 @@ bool TlsServer::Enable()
 		// accepted curves so a single cert/key pair works across interfaces. P-521 is excluded
 		// because handshakes can take seconds even with hardware MPI, causing browser timeouts
 		// under the parallel-connection load DWC opens
+#if OLD_SDK
 		static const mbedtls_ecp_group_id ecdheCurves[] = {
 			MBEDTLS_ECP_DP_SECP256R1,
 			MBEDTLS_ECP_DP_SECP384R1,
 			MBEDTLS_ECP_DP_NONE,	// sentinel
 		};
 		mbedtls_ssl_conf_curves(&conf, ecdheCurves);
+#else
+		// mbedtls_ssl_conf_curves replaced by mbedtls_ssl_conf_groups using IANA uint16_t constants.
+		static const uint16_t ecdheCurves[] = {
+			MBEDTLS_SSL_IANA_TLS_GROUP_SECP256R1,
+			MBEDTLS_SSL_IANA_TLS_GROUP_SECP384R1,
+			MBEDTLS_SSL_IANA_TLS_GROUP_NONE,	// sentinel
+		};
+		mbedtls_ssl_conf_groups(&conf, ecdheCurves);
+#endif
 	}
 
 	// PEM buffers are no longer needed after parsing - the x509_crt and pk_context own the parsed data
