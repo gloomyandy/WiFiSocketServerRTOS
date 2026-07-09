@@ -82,6 +82,23 @@ extern esp_rom_spiflash_chip_t g_rom_flashchip;
 #include "esp_eap_client.h"
 #endif
 
+#if ESP8266
+const ModuleType moduleType = ModuleType::esp8266;
+#elif CONFIG_IDF_TARGET_ESP32C3
+const ModuleType moduleType = ModuleType::esp32c3;
+#elif CONFIG_IDF_TARGET_ESP32S3
+const ModuleType moduleType = ModuleType::esp32s3;
+#elif CONFIG_IDF_TARGET_ESP32
+# if SUPPORT_ETHERNET
+const ModuleType moduleType = ModuleType::esp32eth;
+# else
+const ModuleType moduleType = ModuleType::esp32;
+# endif
+#elif CONFIG_IDF_TARGET_ESP32C5
+const ModuleType moduleType = ModuleType::esp32c5;
+#else
+#error "unknown target chip"
+#endif
 
 
 static const uint32_t MaxConnectTime = 40 * 1000;			// how long we wait for WiFi to connect in milliseconds
@@ -741,16 +758,15 @@ static void debugPrintNetwork(const char *desc, wifi_ap_record_t *apr)
 int ScanForNetworks(const char *reqSsid, uint8_t mac[6], int8_t &channel, WirelessConfigurationData &wp)
 {
 	ConfigureSTAMode();
-	esp_wifi_start();
-#if SUPPORT_5G
-	ESP_ERROR_CHECK(esp_wifi_set_band_mode(WIFI_BAND_MODE_AUTO));
-#endif
 	if (!StartStation())
 	{
 		esp_wifi_stop();
 		lastError = "failed to start WiFi";
 		return -1;
 	}
+#if SUPPORT_5G
+	ESP_ERROR_CHECK(esp_wifi_set_band_mode(WIFI_BAND_MODE_AUTO));
+#endif
 
 	wifi_scan_config_t cfg;
 	memset(&cfg, 0, sizeof(cfg));
@@ -1034,16 +1050,15 @@ pre(currentState == WiFiState::idle)
 #endif
 	}
 
-	esp_wifi_start();
-#if SUPPORT_5G
-	ESP_ERROR_CHECK(esp_wifi_set_band_mode(WIFI_BAND_MODE_AUTO));
-#endif
 	if (!StartStation())
 	{
 		esp_wifi_stop();
 		lastError = "failed to start WiFi";
 		return;
 	}
+#if SUPPORT_5G
+	ESP_ERROR_CHECK(esp_wifi_set_band_mode(WIFI_BAND_MODE_AUTO));
+#endif
 
 	// ssidData contains the details of the strongest known access point
 	debugPrintf("Trying to connect to ssid \"%s\" with password \"%s\"\n", wp.ssid, wp.password);
@@ -1305,6 +1320,7 @@ extern uint32_t lan87xxOperatingMode;
 
 void EthInit(uint32_t mode)
 {
+	esp_wifi_deinit();
 	debugPrintf("Start eth init mode %x\n", mode);
 	lan87xxOperatingMode = mode;
 #if OLD_SDK
@@ -2519,7 +2535,7 @@ void setup()
 	esp_flash_get_physical_size(NULL, &flashSize);
 #endif
 	mainTaskHdl = xTaskGetCurrentTaskHandle();
-	debugPrintAlways("\r\nESP Starting setup\n");
+	debugPrintfAlways("\r\nESP Starting setup free heap %u\n", (unsigned)esp_get_free_heap_size());
 	led_indicator_config_t ledCfg;
 	ledCfg.off_level = LedOffLevel;
 	ledCfg.mode = LED_GPIO_MODE;
@@ -2544,6 +2560,7 @@ void setup()
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
 	cfg.nvs_enable = false;
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+	debugPrintfAlways("After WiFi init %u\n", (unsigned)esp_get_free_heap_size());
 
 	wifiEventGroup = xEventGroupCreate();
 
@@ -2577,6 +2594,7 @@ void setup()
 
 	wirelessConfigMgr = WirelessConfigurationMgr::GetInstance();
 	wirelessConfigMgr->Init();
+	debugPrintfAlways("After config mgr init %u\n", (unsigned)esp_get_free_heap_size());
 
 #if SUPPORT_ETHERNET
 # if ETH_V0
@@ -2647,7 +2665,7 @@ void setup()
 	Listener::Init();
 
 	lastError = nullptr;
-	debugPrintAlways("Init completed\n");
+	debugPrintfAlways("Init completed %u\n", (unsigned)esp_get_free_heap_size());
 	gpio_set_level(EspReqTransferPin, 1);					// tell the SAM we are ready to receive a command
 	led_indicator_stop(led, ONBOARD_LED_RESET);
 	led_indicator_start(led, ONBOARD_LED_IDLE);
