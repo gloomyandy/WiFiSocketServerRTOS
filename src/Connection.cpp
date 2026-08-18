@@ -133,6 +133,7 @@ size_t Connection::Write(const uint8_t *data, size_t length, bool doPush, bool c
 {
 	if (!(state == ConnState::connected && !pendOtherEndClosed))
 	{
+		//debugPrint("write other end closed\n");
 		return 0;
 	}
 
@@ -177,7 +178,7 @@ size_t Connection::Write(const uint8_t *data, size_t length, bool doPush, bool c
 	size_t total = 0;
 	size_t written = 0;
 	err_t rc = ERR_OK;
-
+	uint32_t start = millis();
 	for( ; total < length; total += written) {
 		written = 0;
 		rc = netconn_write_partly(conn, data + total, length - total, flag, &written);
@@ -188,15 +189,34 @@ size_t Connection::Write(const uint8_t *data, size_t length, bool doPush, bool c
 			break;
 		}
 		if (rc == ERR_WOULDBLOCK && written == 0) {
-			break;		// send buffer full and no progress after timeout, avoid spinning
+			if (millis() - start > MaxReadWriteTime)
+			{
+				break;		// send buffer full and no progress after timeout, avoid spinning
+			}
+			vTaskDelay(1);
 		}
 	}
-
+#if 0
+	if (total < length)
+	{
+		if (conn && conn->pcb.tcp)
+		{
+			debugPrintf("short write req %d act %d err %d sndbuf %d ql %d/%d mem %u\n", length, total, rc, tcp_sndbuf(conn->pcb.tcp), tcp_sndqueuelen(conn->pcb.tcp), TCP_SND_QUEUELEN, esp_get_free_heap_size());
+		}
+		else
+		{
+			debugPrintf("short write req %d act %d err %d\n", length, total, rc);
+		}
+		ReportConnections();
+	}
+#endif
 	if (rc != ERR_OK)
 	{
 		if (rc == ERR_RST || rc == ERR_CLSD)
 		{
 			SetState(ConnState::otherEndClosed);
+			// avoid reporting a spurious write error
+			total = length;
 		}
 		else if (rc != ERR_WOULDBLOCK)
 		{
@@ -229,7 +249,7 @@ size_t Connection::CanWrite() const
 #endif
 	// Return the amount of free space in the write buffer
 	// Note: we cannot necessarily write this amount, because it depends on memory allocations being successful.
-	return ((state == ConnState::connected && !pendOtherEndClosed) && conn->pcb.tcp) ?
+	return ((state == ConnState::connected && !pendOtherEndClosed) && conn != nullptr && conn->pcb.tcp) ?
 		std::min((size_t)tcp_sndbuf(conn->pcb.tcp), MaxDataLength) : 0;
 }
 
@@ -703,7 +723,7 @@ void Connection::Report()
 	ets_printf("%s", (st < ARRAY_SIZE(connStateText)) ? connStateText[st]: "unknown");
 	if (state != ConnState::free)
 	{
-		ets_printf(" %u, %u, %u.%u.%u.%u", localPort, remotePort, remoteIp & 255, (remoteIp >> 8) & 255, (remoteIp >> 16) & 255, (remoteIp >> 24) & 255);
+		ets_printf(" %u, %u, %u.%u.%u.%u %d", localPort, remotePort, remoteIp & 255, (remoteIp >> 8) & 255, (remoteIp >> 16) & 255, (remoteIp >> 24) & 255, (conn && conn->pcb.tcp ? (int)tcp_sndbuf(conn->pcb.tcp) : -1));
 	}
 }
 
@@ -767,7 +787,7 @@ void Connection::Report()
 		ets_printf("%c %u:", (i == 0) ? ':' : ',', i);
 		connectionList[i]->Report();
 	}
-	ets_printf("\n");
+	ets_printf("mem %u\n", esp_get_free_heap_size());
 }
 
 /*static*/ void Connection::GetSummarySocketStatus(uint16_t& connectedSockets, uint16_t& otherEndClosedSockets)
