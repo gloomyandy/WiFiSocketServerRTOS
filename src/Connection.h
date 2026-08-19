@@ -29,6 +29,11 @@ struct TlsBioState;
 
 constexpr uint32_t MaxReadWriteTime = 2000;		// how long we wait for a write operation to complete before it is cancelled
 constexpr uint32_t MaxAckTime = 4000;			// how long we wait for a connection to acknowledge the remaining data before it is closed
+#ifdef ESP8266
+constexpr size_t MinFreeHeapForWrite = 6 * 1024;	// stop accepting write data from the SAM below this much free heap, see Connection::CanWrite
+#else
+constexpr size_t MinFreeHeapForWrite = 16 * 1024;
+#endif
 #if SUPPORTS_TLS
 constexpr size_t TlsPlaintextBufSize = 2048;	// per-connection plaintext staging buffer for decrypted TLS data
 constexpr uint32_t MaxHandshakeTime = 8000;		// upper bound on a deferred TLS handshake before the connection is dropped
@@ -88,6 +93,13 @@ private:
 	bool pendOtherEndClosed;	// indicates that the other end has closed the connection, but changing the state
 								// should wait after the data from this connection has all been read
 
+	uint8_t *pendingWrite;		// write data accepted from the SAM that lwIP has not taken yet, MaxDataLength bytes allocated on demand
+	size_t pendingLen;			// number of bytes stashed in pendingWrite
+	size_t pendingHead;			// next byte of pendingWrite to hand to lwIP
+	uint32_t pendingSince;		// millis() when the data was stashed
+	bool pendingPush;			// push flag of the stashed write
+	bool pendingClose;			// close the connection once the stash has drained
+
 #if SUPPORTS_TLS
 	mbedtls_ssl_context *ssl;	// non-null when this connection is TLS-wrapped; replaces the pbuf chain
 	TlsBioState *tlsBio;		// BIO state (netconn + pending pbuf cursor) - referenced by ssl via mbedtls_ssl_set_bio
@@ -117,6 +129,10 @@ private:
 	static Connection *connectionList[MaxConnections];
 
 	void FreePbuf();
+	bool SendRaw(const uint8_t *data, size_t length, bool push, size_t& written);
+	bool Stash(const uint8_t *data, size_t length, bool push, bool closeAfterSending);
+	void DrainPending();
+	void FreePending();
 	void Report();
 
 	static void ConnectCallback(struct netconn *conn, enum netconn_evt evt, u16_t len);
