@@ -23,6 +23,9 @@
 
 static_assert(MaxConnections < CONFIG_LWIP_MAX_SOCKETS); // Limits the listen callback value notification
 
+// Define to cap what SendRaw hands to the stack per call, forcing every larger write through the pending-write path for testing
+//#define WRITE_STASH_TEST_CAP	512
+
 // Public interface
 Connection::Connection(uint8_t num)
 	: number(num), localPort(0), remotePort(0), remoteIp(0), conn(nullptr), state(ConnState::free),
@@ -126,7 +129,10 @@ size_t Connection::Write(const uint8_t *data, size_t length, bool doPush, bool c
 	size_t written = 0;
 	if (!SendRaw(data, length, push, written))
 	{
-		return written;
+		// A reset that lands mid-write and one that lands just after the data was buffered look the same to the client,
+		// so count the data as accepted instead of reporting an incomplete write; RRF learns about the peer close from
+		// the next status report
+		return (state == ConnState::otherEndClosed) ? length : written;
 	}
 	if (written < length && !Stash(data + written, length - written, push, closeAfterSending))
 	{
@@ -145,6 +151,9 @@ size_t Connection::Write(const uint8_t *data, size_t length, bool doPush, bool c
 // Returns false if the connection is no longer usable, in which case the state has already been updated
 bool Connection::SendRaw(const uint8_t *data, size_t length, bool push, size_t& written)
 {
+#ifdef WRITE_STASH_TEST_CAP
+	length = std::min<size_t>(length, WRITE_STASH_TEST_CAP);
+#endif
 	written = 0;
 #if SUPPORTS_TLS
 	if (ssl != nullptr)
@@ -161,6 +170,12 @@ bool Connection::SendRaw(const uint8_t *data, size_t length, bool push, size_t& 
 			else if (rc == MBEDTLS_ERR_SSL_WANT_READ || rc == MBEDTLS_ERR_SSL_WANT_WRITE)
 			{
 				break;
+			}
+			else if (rc == MBEDTLS_ERR_NET_CONN_RESET)
+			{
+				// Same mapping as the read path in Poll: a bare TCP close/reset from the peer is a peer close, not an internal error
+				SetState(ConnState::otherEndClosed);
+				return false;
 			}
 			else
 			{
