@@ -9,13 +9,13 @@
 #include <algorithm>			// for std::min
 
 #include "lwip/tcp.h"
+#include "esp_system.h"			// for esp_get_free_heap_size
 
 #include "Connection.h"
 #include "Misc.h"				// for millis
 #include "Config.h"
 
 #if SUPPORTS_TLS
-#include "freertos/task.h"		// for vTaskDelay
 #include "TlsServer.h"
 #include "mbedtls/ssl.h"
 #include "mbedtls/net_sockets.h"	// for MBEDTLS_ERR_NET_CONN_RESET
@@ -23,10 +23,14 @@
 
 static_assert(MaxConnections < CONFIG_LWIP_MAX_SOCKETS); // Limits the listen callback value notification
 
+// Define to cap what SendRaw hands to the stack per call, forcing every larger write through the pending-write path for testing
+//#define WRITE_STASH_TEST_CAP	512
+
 // Public interface
 Connection::Connection(uint8_t num)
 	: number(num), localPort(0), remotePort(0), remoteIp(0), conn(nullptr), state(ConnState::free),
-	closeTimer(0),readBuf(nullptr), readIndex(0), alreadyRead(0), pendOtherEndClosed(false)
+	closeTimer(0),readBuf(nullptr), readIndex(0), alreadyRead(0), pendOtherEndClosed(false),
+	pendingWrite(nullptr), pendingLen(0), pendingHead(0), pendingSince(0), pendingPush(false), pendingClose(false)
 #if SUPPORTS_TLS
 	, ssl(nullptr), tlsBio(nullptr), tlsPlain(nullptr), tlsPlainHead(0), tlsPlainTail(0), handshakeStart(0)
 #endif
@@ -110,151 +114,180 @@ size_t Connection::CanRead() const
 }
 
 // Write data to the connection. The amount of data may be zero.
-// A note about writing:
-// - LWIP is compiled with option LWIP_NETIF_TX_SINGLE_PBUF set. A comment says this is mandatory for the ESP8266.
-// - A side effect of this is that when we call tcp_write, the data is always copied even if we don't set the TCP_WRITE_FLAG_COPY flag.
-// - The PBUFs used to copy the outgoing data into are always large enough to accommodate the MSS. The total allocation size per PBUF is 1560 bytes.
-// - Sending a full 2K of data may require 2 of these PBUFs to be allocated.
-// - Due to memory fragmentation and other pending packets, this allocation is sometimes fails if we are serving more than 2 files at a time.
-// - The result returned by tcp_sndbuf doesn't take account of the possibility that this allocation may fail.
-// - When it receives a write request from the Duet main processor, our socket server has to say how much data it can accept before accepting it.
-// - So in version 1.21 it sometimes happened that we accept some data based on the amount that tcp_sndbuf say we can, but we can't actually send it.
-// - We then terminate the connection, and the client request fails.
-// To mitigate this we could:
-// - Have one overflow write buffer, shared between all connections
-// - Only accept write data from the Duet main processor if the overflow buffer is free
-// - If after accepting data from the Duet main processor we find that we can't send it, we send some of it if we can and store the rest in the overflow buffer
-// - Then we push any pending data that we already have, and in Poll() we try to send the data in overflow buffer
-// - When the overflow buffer is empty again, we can start accepting write data from the Duet main processor again.
-// A further mitigation would be to restrict the amount of data we accept so some amount that will fit in the MSS, then tcp_write will need to allocate at most one PBUF.
-// However, another reason why tcp_write can fail is because MEMP_NUM_TCP_SEG is set too low in Lwip. It now appears that this is the maoin cause of files tcp_write
-// call in version 1.21. So I have increased it from 10 to 16, which seems to have fixed the problem..
+// The SAM is told how much we accept (see CanWrite) before the data arrives over SPI, so by the time we get here the data
+// cannot be refused any more. tcp_sndbuf only tracks a byte budget; the segments and pbufs behind it come from the heap
+// (MEMP_MEM_MALLOC), so a write within budget can still be refused. Whatever lwIP does not take right now is stashed in
+// pendingWrite and drained from Poll(); CanWrite reports 0 until the stash is empty. Data is only lost when the connection is terminated
 size_t Connection::Write(const uint8_t *data, size_t length, bool doPush, bool closeAfterSending)
 {
-	if (!(state == ConnState::connected && !pendOtherEndClosed))
+	if (!(state == ConnState::connected && !pendOtherEndClosed) || pendingLen != 0)
 	{
 		//debugPrint("write other end closed\n");
 		return 0;
 	}
 
-#if SUPPORTS_TLS
-	if (ssl != nullptr)
-	{
-		size_t total = 0;
-		while (total < length)
-		{
-			const int rc = mbedtls_ssl_write(ssl, data + total, length - total);
-			if (rc > 0)
-			{
-				total += static_cast<size_t>(rc);
-				continue;
-			}
-			if (rc == MBEDTLS_ERR_SSL_WANT_READ || rc == MBEDTLS_ERR_SSL_WANT_WRITE)
-			{
-				if (total == 0)
-				{
-					break;		// caller can retry; no progress so avoid spinning
-				}
-				vTaskDelay(1);	// some data went out but the peer's window is full - yield instead of busy-spinning
-				continue;
-			}
-			debugPrintfAlways("TLS Write fail len=%u err=-0x%04x\n", total, -rc);
-			Terminate(false);
-			return 0;
-		}
-		if (closeAfterSending)
-		{
-			Close();
-		}
-		return total;
-	}
-#endif
-
-	// Try to send all the data
 	const bool push = doPush || closeAfterSending;
-
-	u8_t flag = NETCONN_COPY | (push ? 0 : NETCONN_MORE);
-
-	size_t total = 0;
 	size_t written = 0;
-	err_t rc = ERR_OK;
-	uint32_t start = millis();
-	for( ; total < length; total += written) {
-		written = 0;
-		rc = netconn_write_partly(conn, data + total, length - total, flag, &written);
-
-		// Note: ERR_MEM is not handled here because lwIP's netconn layer retries
-		// internally and never propagates ERR_MEM to the application layer.
-		if (rc != ERR_OK && rc != ERR_WOULDBLOCK) {
-			break;
-		}
-		if (rc == ERR_WOULDBLOCK && written == 0) {
-			if (millis() - start > MaxReadWriteTime)
-			{
-				break;		// send buffer full and no progress after timeout, avoid spinning
-			}
-			vTaskDelay(1);
-		}
-	}
-#if 0
-	if (total < length)
+	if (!SendRaw(data, length, push, written))
 	{
-		if (conn && conn->pcb.tcp)
-		{
-			debugPrintf("short write req %d act %d err %d sndbuf %d ql %d/%d mem %u\n", length, total, rc, tcp_sndbuf(conn->pcb.tcp), tcp_sndqueuelen(conn->pcb.tcp), TCP_SND_QUEUELEN, esp_get_free_heap_size());
-		}
-		else
-		{
-			debugPrintf("short write req %d act %d err %d\n", length, total, rc);
-		}
-		ReportConnections();
+		// A reset that lands mid-write and one that lands just after the data was buffered look the same to the client,
+		// so count the data as accepted instead of reporting an incomplete write; RRF learns about the peer close from
+		// the next status report
+		return (state == ConnState::otherEndClosed) ? length : written;
 	}
-#endif
-	if (rc != ERR_OK)
+	if (written < length && !Stash(data + written, length - written, push, closeAfterSending))
 	{
-		if (rc == ERR_RST || rc == ERR_CLSD)
-		{
-			SetState(ConnState::otherEndClosed);
-			// avoid reporting a spurious write error
-			total = length;
-		}
-		else if (rc != ERR_WOULDBLOCK)
-		{
-			// We failed to write the data. See above for possible mitigations. For now we just terminate the connection.
-			debugPrintfAlways("Write fail len=%u err=%d\n", total, (int)rc);
-			Terminate(false);		// chrishamm: Not sure if this helps with LwIP v1.4.3 but it is mandatory for proper error handling with LwIP 2.0.3
-			return 0;
-		}
+		debugPrintfAlways("Write stash fail len=%u\n", length - written);
+		Terminate(false);
+		return written;
 	}
-
-	// Close the connection again when we're done
-	if (closeAfterSending)
+	if (closeAfterSending && pendingLen == 0)
 	{
 		Close();
 	}
-
-	return total;
+	return length;
 }
 
-size_t Connection::CanWrite() const
+// Hand data to lwIP (or mbedTLS) without blocking. 'written' receives the amount taken, which may be less than 'length'.
+// Returns false if the connection is no longer usable, in which case the state has already been updated
+bool Connection::SendRaw(const uint8_t *data, size_t length, bool push, size_t& written)
 {
+#ifdef WRITE_STASH_TEST_CAP
+	length = std::min<size_t>(length, WRITE_STASH_TEST_CAP);
+#endif
+	written = 0;
 #if SUPPORTS_TLS
 	if (ssl != nullptr)
 	{
-		// For TLS the netconn underneath has overhead per record. Report a conservative figure;
-		// the SAM uses this to gate writes, the mbedTLS layer will WANT_WRITE if it can't send right now
-		return ((state == ConnState::connected && !pendOtherEndClosed) && conn != nullptr && conn->pcb.tcp)
-			? std::min((size_t)tcp_sndbuf(conn->pcb.tcp), MaxDataLength) : 0;
+		while (written < length)
+		{
+			// After WANT_WRITE mbedTLS keeps the encrypted record and expects the retry with the same length, which is
+			// exactly what DrainPending passes because 'written' only advances by what mbedTLS reported
+			const int rc = mbedtls_ssl_write(ssl, data + written, length - written);
+			if (rc > 0)
+			{
+				written += static_cast<size_t>(rc);
+			}
+			else if (rc == MBEDTLS_ERR_SSL_WANT_READ || rc == MBEDTLS_ERR_SSL_WANT_WRITE)
+			{
+				break;
+			}
+			else if (rc == MBEDTLS_ERR_NET_CONN_RESET)
+			{
+				// Same mapping as the read path in Poll: a bare TCP close/reset from the peer is a peer close, not an internal error
+				SetState(ConnState::otherEndClosed);
+				return false;
+			}
+			else
+			{
+				debugPrintfAlways("TLS Write fail len=%u err=-0x%04x\n", written, -rc);
+				Terminate(false);
+				return false;
+			}
+		}
+		return true;
 	}
 #endif
-	// Return the amount of free space in the write buffer
-	// Note: we cannot necessarily write this amount, because it depends on memory allocations being successful.
-	return ((state == ConnState::connected && !pendOtherEndClosed) && conn != nullptr && conn->pcb.tcp) ?
-		std::min((size_t)tcp_sndbuf(conn->pcb.tcp), MaxDataLength) : 0;
+
+	const err_t rc = netconn_write_partly(conn, data, length, NETCONN_COPY | NETCONN_DONTBLOCK | (push ? 0 : NETCONN_MORE), &written);
+	if (rc == ERR_OK || rc == ERR_WOULDBLOCK)
+	{
+		return true;
+	}
+	if (rc == ERR_RST || rc == ERR_CLSD || rc == ERR_ABRT || rc == ERR_CONN)
+	{
+		SetState(ConnState::otherEndClosed);
+	}
+	else
+	{
+		debugPrintfAlways("Write fail len=%u err=%d\n", written, (int)rc);
+		Terminate(false);
+	}
+	return false;
+}
+
+bool Connection::Stash(const uint8_t *data, size_t length, bool push, bool closeAfterSending)
+{
+	if (pendingWrite == nullptr)
+	{
+		pendingWrite = static_cast<uint8_t *>(malloc(MaxDataLength));
+		if (pendingWrite == nullptr)
+		{
+			return false;
+		}
+	}
+	memcpy(pendingWrite, data, length);
+	pendingLen = length;
+	pendingHead = 0;
+	pendingSince = millis();
+	pendingPush = push;
+	pendingClose = closeAfterSending;
+	return true;
+}
+
+// Try to hand stashed write data to lwIP. Called from Poll, i.e. from the same task as Write
+void Connection::DrainPending()
+{
+	if (pendingLen == 0)
+	{
+		return;
+	}
+	if (!(state == ConnState::connected && !pendOtherEndClosed))
+	{
+		FreePending();
+		return;
+	}
+
+	size_t written = 0;
+	if (!SendRaw(pendingWrite + pendingHead, pendingLen - pendingHead, pendingPush, written))
+	{
+		FreePending();
+		return;
+	}
+	pendingHead += written;
+	if (pendingHead == pendingLen)
+	{
+		const bool close = pendingClose;
+		FreePending();
+		if (close)
+		{
+			Close();
+		}
+	}
+	else if (millis() - pendingSince >= MaxAckTime)
+	{
+		// The peer has not made room for the data in a long time, give up on it rather than holding the socket forever
+		debugPrintfAlways("Write stall len=%u\n", pendingLen - pendingHead);
+		Terminate(false);
+	}
+}
+
+void Connection::FreePending()
+{
+	if (pendingWrite != nullptr)
+	{
+		free(pendingWrite);
+		pendingWrite = nullptr;
+	}
+	pendingLen = pendingHead = 0;
+	pendingClose = false;
+}
+
+// Return how much write data we accept from the SAM right now. tcp_sndbuf is only a byte budget: with MEMP_MEM_MALLOC the
+// segments behind it come from the heap, which the receive queues of all sockets and mbedTLS compete for, so also stop
+// accepting data when the heap runs low. Data that lwIP still refuses lands in pendingWrite, which blocks further writes until drained
+size_t Connection::CanWrite() const
+{
+	if (!(state == ConnState::connected && !pendOtherEndClosed) || pendingLen != 0 || conn == nullptr || conn->pcb.tcp == nullptr || esp_get_free_heap_size() < MinFreeHeapForWrite)
+	{
+		return 0;
+	}
+	return std::min((size_t)tcp_sndbuf(conn->pcb.tcp), MaxDataLength);
 }
 
 void Connection::Poll()
 {
+	DrainPending();
 #if SUPPORTS_TLS
 	if (ssl != nullptr)
 	{
@@ -392,6 +425,11 @@ void Connection::Close()
 	switch(state)
 	{
 	case ConnState::connected:						// both ends are still connected
+		if (pendingLen != 0)
+		{
+			pendingClose = true;					// DrainPending closes once lwIP has taken the stashed data
+			break;
+		}
 		if (conn->pcb.tcp && conn->pcb.tcp->unacked)
 		{
 			closeTimer = millis();
@@ -417,6 +455,7 @@ void Connection::Close()
 			conn = nullptr;
 		}
 		FreePbuf();
+		FreePending();
 		SetState(ConnState::free);
 		if (listener)
 		{
@@ -509,6 +548,7 @@ void Connection::TerminateLocked(bool external)
 		conn = nullptr;
 	}
 	FreePbuf();
+	FreePending();
 	SetState((external) ? ConnState::free : ConnState::aborted);
 	if (external && listener)
 	{
