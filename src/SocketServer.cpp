@@ -135,6 +135,7 @@ static_assert(HostNameLength <= CONFIG_TCPIP_ADAPTER_HOSTNAME_MAX_LENGTH);
 static_assert(HostNameLength <= CONFIG_ESP_NETIF_HOSTNAME_MAX_LENGTH);
 #endif
 static char webHostName[HostNameLength + 1] = "Duet-WiFi";
+static char mdnsHostName[HostNameLength + 1] = "";		// host name last passed to mdns_hostname_set
 
 #ifdef DEBUG
 static NetworkCommand lastCommand = NetworkCommand::nullCommand;
@@ -544,7 +545,12 @@ void RebuildServices()
 	static const mdns_txt_item_t MdnsTxtRecords[2] = { {"version", VERSION_MAIN}, {"product", "DuetWiFi"}, };
 
 	mdns_service_remove_all();
-	mdns_hostname_set(webHostName);
+	if (strcmp(mdnsHostName, webHostName) != 0)
+	{
+		// Setting the host name makes the responder send bye packets for it and re-probe, so do it only on an actual change
+		mdns_hostname_set(webHostName);
+		SafeStrncpy(mdnsHostName, webHostName, sizeof(mdnsHostName));
+	}
 	for (size_t protocol = 0; protocol < 3; protocol++)
 	{
 		const uint16_t port = Listener::GetPortByProtocol(protocol);
@@ -561,6 +567,19 @@ void RemoveMdnsServices()
 {
 	mdns_service_remove_all();
 	mdns_free();
+	mdnsHostName[0] = 0;
+}
+
+// Drop the BSSID pin StartClient set, so a reconnect may land on any AP of the network. The reconnect path never
+// rescans, so without this an AP that has gone away would be retried forever instead of falling back to another one
+static void ClearBssidPin()
+{
+	wifi_config_t cfg;
+	if (esp_wifi_get_config(WIFI_IF_STA, &cfg) == ESP_OK && cfg.sta.bssid_set)
+	{
+		cfg.sta.bssid_set = false;
+		esp_wifi_set_config(WIFI_IF_STA, &cfg);
+	}
 }
 
 // Try to connect using the specified SSID and password
@@ -717,6 +736,7 @@ void WiFiConnectionTask(void* data)
 			wirelessConfigMgr->GetSsid(currentSsid, wp);
 			currentState = isFirstConnectWorkaround() ? WiFiState::connecting : WiFiState::reconnecting;
 			debugPrintf("Trying to reconnect to ssid \"%s\" with password \"%s\"\n", wp.ssid, wp.password);
+			ClearBssidPin();
 			ConnectToAccessPoint();
 		}
 
@@ -890,6 +910,10 @@ pre(currentState == WiFiState::idle)
 	SafeStrncpy((char*)wifi_config.sta.ssid, (char*)wp.ssid,
 		std::min(sizeof(wifi_config.sta.ssid), sizeof(wp.ssid)));
 
+	// ESP-IDF ignores sta.bssid unless bssid_set is set, so without this the driver picks the AP itself and can
+	// settle on a distant node of a mesh, where every node shares the SSID and the station never roams
+	wifi_config.sta.bssid_set = true;
+
 #ifndef ESP8266
 #if OLD_SDK
 	if (channel >= 0 && channel <= 13)
@@ -902,7 +926,6 @@ pre(currentState == WiFiState::idle)
 	}
 #else
 	wifi_config.sta.channel = channel;
-	wifi_config.sta.bssid_set = true;
 #endif
 #else
 	// Workaround for ESP8266, which seems to ignore the channel argument,
