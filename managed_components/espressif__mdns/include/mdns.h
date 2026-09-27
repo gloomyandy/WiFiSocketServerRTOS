@@ -141,30 +141,39 @@ typedef void (*mdns_query_notify_t)(mdns_search_once_t *search);
 /**
  * @brief Browse result change notifier
  *
- * Called once per browse result that changed in a given response packet (not
- * once per packet). The @p result argument points at the changed entry, but it
- * remains a live node in the internal browse cache until the callback returns.
+ * Called once for every matching browse result changed by a received response,
+ * or once for every currently cached result when a new browse is registered.
  *
- * @warning @p result->next links other cached instances for this browse, not
- *          necessarily other results that changed in the same packet. For
- *          ordinary add/update notifications, use only @p result; do not walk
- *          @c next, because unchanged instances may appear there.
+ * The @p result is a temporary projection of the internal mDNS cache, which is only valid
+ * during the lifetime of this callback and is freed immediately after the callback returns.
  *
- * @warning Batch PTR TTL=0 ("goodbye") responses (for example when a peer
- *          exits and Bonjour sends many removals in one packet) may invoke the
- *          notifier once while several instances in the cache are updated.
- *          Until this is improved, applications may walk @c next and treat
- *          entries with @c ttl == 0 as removals. Do not assume every node on
- *          @c next changed in the current packet.
+ * @warning @p result->next is always NULL. Other instances cannot be obtained from @p result.
  *
- * @warning If handling is deferred outside this callback, copy @p result first
- *          (including strings and addresses). Goodbye entries may be freed when
- *          the callback returns.
+ * @warning If handling is deferred outside this callback, applications must make a deep copy
+ *          of @p result with all components, including strings, TXT entries, and address list.
  *
- * @param result  The browse result that changed. See the warnings above for
- *                use of @c result->next.
+ * @warning This callback runs in the mDNS service task and holds the mDNS service lock.
+ *          Users must not call APIs that acquire mDNS service lock in this callback.
+ *          For example, mdns_browse_new() and mdns_browse_delete().
+ *
+ * @param result  Temporary result of the browse that changed.
  */
 typedef void (*mdns_browse_notify_t)(mdns_result_t *result);
+
+/**
+ * @brief Hostname change notifier
+ *
+ * Called from the mDNS service task after the hostname changes.
+ * The @p hostname argument is the new hostname. It remains valid until the
+ * callback returns.
+ *
+ * @warning Do not call mDNS APIs from this callback. The callback runs while
+ *          the mDNS service is processing an action.
+ *
+ * @param hostname  The new responder hostname.
+ * @param arg       User context supplied when registering the callback.
+ */
+typedef void (*mdns_hostname_changed_cb_t)(const char *hostname, void *arg);
 
 /**
  * @brief  Initialize mDNS on given interface
@@ -195,6 +204,24 @@ void mdns_free(void);
  *     - ESP_ERR_NO_MEM memory error
  */
 esp_err_t mdns_hostname_set(const char *hostname);
+
+/**
+ * @brief Register a callback notified when the hostname changes
+ *
+ * Multiple callbacks can be registered. Registering the same callback and
+ * context more than once has no effect. Callbacks cannot be unregistered and
+ * remain registered until mdns_free() is called.
+ *
+ * @param cb   Callback to invoke when the hostname changes.
+ * @param arg  User context passed to @p cb.
+ *
+ * @return
+ *     - ESP_OK on success
+ *     - ESP_ERR_INVALID_STATE when mDNS is not initialized
+ *     - ESP_ERR_INVALID_ARG when @p cb is NULL
+ *     - ESP_ERR_NO_MEM when the callback cannot be registered
+ */
+esp_err_t mdns_register_hostname_changed_callback(mdns_hostname_changed_cb_t cb, void *arg);
 
 /**
  * @brief Get the hostname for mDNS server
@@ -1043,6 +1070,7 @@ esp_err_t mdns_unregister_netif(esp_netif_t *esp_netif);
  */
 esp_err_t mdns_netif_action(esp_netif_t *esp_netif, mdns_event_actions_t event_action);
 
+#ifdef CONFIG_MDNS_ENABLE_BROWSE
 /**
  * @brief   Browse mDNS for a service `_service._proto`.
  *
@@ -1053,16 +1081,16 @@ esp_err_t mdns_netif_action(esp_netif_t *esp_netif, mdns_event_actions_t event_a
  * @return mdns_browse_t pointer to new browse object if initiated successfully.
  *         NULL otherwise.
  *
- * @note When several service instances share the same SRV target hostname, A/AAAA
- *       addresses from a response are attached only to the first matching browse
- *       result for that hostname (per interface and IP protocol). Other instances
- *       with the same target host are not populated automatically; applications
- *       that need host-level addresses for every instance must resolve or cache
- *       them separately until this behavior is improved.
+ * @note If matching services already present in the internal mDNS cache,
+ *       the notifier will be called once for each cached service after this browse
+ *       is registered.
  *
- * @note If one response packet contains answers for multiple active browses,
- *       only one browse is synchronized for that packet. This should not affect
- *       typical browse traffic, where packets answer one service type.
+ * @note The notifier receives a temporary result that is valid only during the callback.
+ *       See @ref mdns_browse_notify_t for ownership and lifetime details.
+ *
+ * @note Available when CONFIG_MDNS_ENABLE_BROWSE is enabled (default); can be disabled to reduce binary size.
+ *
+ * @warning This function acquires the mDNS service lock and must not be called from the mDNS service task.
  */
 mdns_browse_t *mdns_browse_new(const char *service, const char *proto, mdns_browse_notify_t notifier);
 
@@ -1074,8 +1102,13 @@ mdns_browse_t *mdns_browse_new(const char *service, const char *proto, mdns_brow
  *     - ESP_OK                 success.
  *     - ESP_ERR_FAIL           mDNS is not running or the browsing of `_service._proto` is never started.
  *     - ESP_ERR_NO_MEM         memory error.
+ *
+ * @note Available when CONFIG_MDNS_ENABLE_BROWSE is enabled (default); can be disabled to reduce binary size.
+ *
+ * @warning This function acquires the mDNS service lock and must not be called from the mDNS service task.
  */
 esp_err_t mdns_browse_delete(const char *service, const char *proto);
+#endif /* CONFIG_MDNS_ENABLE_BROWSE */
 
 #ifdef __cplusplus
 }

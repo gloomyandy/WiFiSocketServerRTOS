@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2025 Espressif Systems (Shanghai) CO LTD
+ * SPDX-FileCopyrightText: 2025-2026 Espressif Systems (Shanghai) CO LTD
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -11,13 +11,6 @@
 #include "esp_log.h"
 #include "esp_check.h"
 #include "esp_eth_phy_802_3.h"
-
-// Following hack added by Andy to allow control of connection speed etc.
-#define RRF_ETHERNET 1
-#if RRF_ETHERNET
-// Allow operating mode to be set, default to "auto"
-uint32_t lan87xxOperatingMode = 0b001;
-#endif
 
 static const char *TAG = "lan87xx";
 
@@ -236,9 +229,10 @@ static esp_err_t lan87xx_update_link_duplex_speed(phy_lan87xx_t *lan87xx)
     ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, addr, ETH_PHY_ANLPAR_REG_ADDR, &(anlpar.val)), err, TAG, "read ANLPAR failed");
     ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, addr, ETH_PHY_BMSR_REG_ADDR, &(bmsr.val)), err, TAG, "read BMSR failed");
     ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, addr, ETH_PHY_BMCR_REG_ADDR, &(bmcr.val)), err, TAG, "read BMCR failed");
-    /* link status is forced up because LAN87xx reports link down when loopback is enabled and cable is unplugged */
     eth_link_t link;
-    if (bmcr.en_loopback) {
+    if (bmcr.power_down) {
+        link = ETH_LINK_DOWN;
+    } else if (bmcr.en_loopback) {
         link = ETH_LINK_UP;
     } else {
         link = bmsr.link_status ? ETH_LINK_UP : ETH_LINK_DOWN;
@@ -302,14 +296,6 @@ static esp_err_t lan87xx_autonego_ctrl(esp_eth_phy_t *phy, eth_phy_autoneg_cmd_t
     esp_err_t ret = ESP_OK;
     phy_802_3_t *phy_802_3 = esp_eth_phy_into_phy_802_3(phy);
     esp_eth_mediator_t *eth = phy_802_3->eth;
-#if RRF_ETHERNET
-    if (lan87xxOperatingMode != 0b111)
-    {
-        // negotiation is disabled
-        return ESP_OK;
-    }
-    ESP_LOGD(TAG, "Starting negotiation\n");
-#endif
     if (cmd == ESP_ETH_PHY_AUTONEGO_EN) {
         bmcr_reg_t bmcr;
         ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, phy_802_3->addr, ETH_PHY_BMCR_REG_ADDR, &(bmcr.val)), err, TAG, "read BMCR failed");
@@ -349,20 +335,6 @@ static esp_err_t lan87xx_init(esp_eth_phy_t *phy)
 {
     esp_err_t ret = ESP_OK;
     phy_802_3_t *phy_802_3 = esp_eth_phy_into_phy_802_3(phy);
-
-#if RRF_ETHERNET
-    // Set link configuration
-    esp_eth_mediator_t *eth = phy_802_3->eth;
-    smr_reg_t smr;
-    ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, phy_802_3->addr, ETH_PHY_SMR_REG_ADDR, &(smr.val)), err, TAG, "read SMR failed");
-
-    ESP_LOGD(TAG, "Operating mode %x requested %x\n", smr.mode, (unsigned int)lan87xxOperatingMode);
-    smr.mode = lan87xxOperatingMode;
-    smr.reserved_1 = 0;
-    smr.reserved_2 = 0;
-    smr.mii_mode = 1;
-    ESP_GOTO_ON_ERROR(eth->phy_reg_write(eth, phy_802_3->addr, ETH_PHY_SMR_REG_ADDR, smr.val), err, TAG, "write SMR failed");
-#endif
 
     /* Basic PHY init */
     ESP_GOTO_ON_ERROR(esp_eth_phy_802_3_basic_phy_init(phy_802_3), err, TAG, "failed to init PHY");
