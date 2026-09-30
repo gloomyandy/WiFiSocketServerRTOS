@@ -17,7 +17,10 @@
 #include "mdns_pcb.h"
 #include "mdns_responder.h"
 #include "mdns_service.h"
-
+#define USE_NSEC 0
+#if USE_NSEC
+#include "rom/ets_sys.h"
+#endif
 static const char *TAG = "mdns_send";
 static const char *MDNS_SUB_STR = "_sub";
 
@@ -83,6 +86,11 @@ static inline uint8_t append_type(uint8_t *packet, uint16_t *index, uint8_t type
     } else if (type == MDNS_ANSWER_AAAA) {
         mdns_utils_append_u16(packet, index, MDNS_TYPE_AAAA);
         mdns_utils_append_u16(packet, index, mdns_class);
+#if USE_NSEC
+    } else if (type == MDNS_ANSWER_NSEC) {
+        mdns_utils_append_u16(packet, index, MDNS_TYPE_NSEC);
+        mdns_utils_append_u16(packet, index, mdns_class);
+#endif
     } else {
         return 0;
     }
@@ -299,6 +307,32 @@ static bool create_answer_from_service(mdns_tx_packet_t *packet, mdns_service_t 
     }
     return true;
 }
+
+#if USE_NSEC
+static bool create_A_answer_from_hostname(mdns_tx_packet_t *packet, const char *hostname, bool send_flush)
+{
+    mdns_host_item_t *host = get_host_item(hostname);
+    if (!mdns_priv_create_answer(&packet->answers, MDNS_TYPE_A, NULL, host, send_flush, false)) {
+        return false;
+    }
+    if (!mdns_priv_create_answer(&packet->additional, MDNS_TYPE_AAAA, NULL, host, send_flush, false)) {
+        return false;
+    }
+    return true;
+}
+
+static bool create_AAAA_answer_from_hostname(mdns_tx_packet_t *packet, const char *hostname, bool send_flush)
+{
+    mdns_host_item_t *host = get_host_item(hostname);
+    if (!mdns_priv_create_answer(&packet->answers, MDNS_TYPE_AAAA, NULL, host, send_flush, false)) {
+        return false;
+    }
+    if (!mdns_priv_create_answer(&packet->additional, MDNS_TYPE_A, NULL, host, send_flush, false)) {
+        return false;
+    }
+    return true;
+}
+#endif
 
 static bool create_answer_from_hostname(mdns_tx_packet_t *packet, const char *hostname, bool send_flush)
 {
@@ -589,6 +623,24 @@ void mdns_priv_create_answer_from_parsed_packet(mdns_parsed_packet_t *parsed_pac
                 }
                 service = service->next;
             }
+#if USE_NSEC
+        } else if (q->type == MDNS_TYPE_A) {
+ets_printf("question type %x\n", q->type);
+            if (!create_A_answer_from_hostname(packet, q->host, send_flush)) {
+                mdns_priv_free_tx_packet(packet);
+                return;
+            } else {
+                out_record_nums++;
+            }
+        } else if (q->type == MDNS_TYPE_AAAA) {
+ets_printf("question type %x\n", q->type);
+            if (!create_AAAA_answer_from_hostname(packet, q->host, send_flush)) {
+                mdns_priv_free_tx_packet(packet);
+                return;
+            } else {
+                out_record_nums++;
+            }
+#else
         } else if (q->type == MDNS_TYPE_A || q->type == MDNS_TYPE_AAAA) {
             if (!create_answer_from_hostname(packet, q->host, send_flush)) {
                 mdns_priv_free_tx_packet(packet);
@@ -596,6 +648,7 @@ void mdns_priv_create_answer_from_parsed_packet(mdns_parsed_packet_t *parsed_pac
             } else {
                 out_record_nums++;
             }
+#endif
         } else if (q->type == MDNS_TYPE_ANY) {
             if (!append_host_list(&packet->answers, send_flush, false)) {
                 mdns_priv_free_tx_packet(packet);
@@ -1144,6 +1197,95 @@ static uint16_t append_a_record(uint8_t *packet, uint16_t *index, const char *ho
 }
 #endif /* CONFIG_LWIP_IPV4 */
 
+#if USE_NSEC
+/**
+ * @brief  appends negative-response NSEC record for the host to a packet, incrementing the index
+ *
+ * @param  packet       MDNS packet
+ * @param  index        offset in the packet
+ * @param  hostname     the hostname the record makes an assertion about
+ * @param  got_a        true if an A record exists for the hostname
+ * @param  got_aaaa     true if an AAAA record exists for the hostname
+ *
+ * @return length of added data: 0 on error or length on success
+ */
+static uint16_t append_host_nsec_record(uint8_t * packet, uint16_t * index, const char * hostname, bool got_a, bool got_aaaa, bool flush)
+{
+    const char * str[2];
+    uint16_t record_length = 0;
+    uint8_t part_length;
+
+    str[0] = hostname;
+    str[1] = MDNS_UTILS_DEFAULT_DOMAIN;
+
+    if (mdns_utils_str_null_or_empty(str[0]) || (!got_a && !got_aaaa)) {
+        return 0;
+    }
+
+    part_length = append_fqdn(packet, index, str, 2, MDNS_MAX_PACKET_SIZE);
+    if (!part_length) {
+        return 0;
+    }
+    record_length += part_length;
+
+    part_length = append_type(packet, index, MDNS_ANSWER_NSEC, flush, MDNS_ANSWER_A_TTL);
+    if (!part_length) {
+        return 0;
+    }
+    record_length += part_length;
+
+    uint16_t data_len_location = *index - 2;
+    uint16_t data_length = 0;
+
+    /* RDATA is the next domain name - our own host name, written uncompressed for widest
+     * querier compatibility - followed by the type bitmap. The bitmap lists exactly the
+     * address record types that exist for the name, which asserts that every other type
+     * (e.g. AAAA when IPv6 is unavailable) does not exist, see RFC 6762 section 6.1 and
+     * the bitmap encoding in RFC 4034 section 4.1.2 */
+#if 0
+    part_length = append_string(packet, index, str[0]);
+    if (!part_length) {
+        return 0;
+    }
+    data_length += part_length;
+    part_length = append_string(packet, index, str[1]);
+    if (!part_length) {
+        return 0;
+    }
+    data_length += part_length;
+    if (!mdns_utils_append_u8(packet, index, 0)) {
+        return 0;
+    }
+    data_length++;
+#else
+    // other responders seem to just use the compressed version here
+    part_length = append_fqdn(packet, index, str, 2, MDNS_MAX_PACKET_SIZE);
+    data_length += part_length;
+#endif
+    uint8_t bitmap[4] = { 0, };
+    uint8_t bitmap_len = 1;
+    if (got_a) {
+        bitmap[0] = 0x40;               /* type 1: A */
+    }
+    if (got_aaaa) {
+        bitmap[3] = 0x08;               /* type 28: AAAA */
+        bitmap_len = 4;
+    }
+    if ((*index + 2 + bitmap_len) >= MDNS_MAX_PACKET_SIZE) {
+        return 0;
+    }
+    mdns_utils_append_u8(packet, index, 0);  /* bitmap window block 0 (types 0-255) */
+    mdns_utils_append_u8(packet, index, bitmap_len);
+    memcpy(packet + *index, bitmap, bitmap_len);
+    *index += bitmap_len;
+    data_length += 2 + bitmap_len;
+
+    set_u16(packet, data_len_location, data_length);
+    record_length += data_length;
+    return record_length;
+}
+#endif
+
 #ifdef CONFIG_LWIP_IPV6
 /**
  * @brief  appends AAAA record to a packet, incrementing the index
@@ -1300,32 +1442,48 @@ static uint8_t append_answer(uint8_t *packet, uint16_t *index, mdns_out_answer_t
         if (answer->host == mdns_priv_get_self_host()) {
             struct esp_ip6_addr if_ip6s[NETIF_IPV6_MAX_NUMS];
             uint8_t count = 0;
+//ets_printf("Got AAAA request\n");
             if (!mdns_priv_if_ready(tcpip_if, MDNS_IP_PROTOCOL_V6) && !mdns_priv_pcb_is_duplicate(tcpip_if,
                                                                                                   MDNS_IP_PROTOCOL_V6)) {
+#if USE_NSEC
+//ets_printf("return 0 0\n");
+                if (answer->bye) {
+//ets_printf("return 0 1\n");
+                    return 0;
+                }
+                bool got_a = mdns_priv_if_ready(tcpip_if, MDNS_IP_PROTOCOL_V4) && !mdns_priv_pcb_is_duplicate(tcpip_if, MDNS_IP_PROTOCOL_V4);
+//ets_printf("got_a %d\n", got_a);
+                return append_host_nsec_record(packet, index, mdns_priv_get_global_hostname(), got_a, false, answer->flush) > 0;
+#endif
                 return 0;
             }
             count = esp_netif_get_all_ip6(mdns_priv_get_esp_netif(tcpip_if), if_ip6s);
             assert(count <= NETIF_IPV6_MAX_NUMS);
             for (int i = 0; i < count; i++) {
                 if (mdns_utils_ipv6_address_is_zero(if_ip6s[i])) {
+//ets_printf("return 0 2\n");
                     return 0;
                 }
                 if (append_aaaa_record(packet, index, mdns_priv_get_global_hostname(), (uint8_t *)if_ip6s[i].addr,
                                        answer->flush, answer->bye) <= 0) {
+//ets_printf("return 0 3\n");
                     return 0;
                 }
             }
             if (!mdns_priv_pcb_check_for_duplicates(tcpip_if)) {
+//ets_printf("return count 1\n");
                 return count;
             }
 
             mdns_if_t other_if = mdns_priv_netif_get_other_interface(tcpip_if);
             struct esp_ip6_addr other_ip6;
             if (esp_netif_get_ip6_linklocal(mdns_priv_get_esp_netif(other_if), &other_ip6)) {
+//ets_printf("return count 2\n");
                 return count;
             }
             if (append_aaaa_record(packet, index, mdns_priv_get_global_hostname(), (uint8_t *)other_ip6.addr,
                                    answer->flush, answer->bye) > 0) {
+//ets_printf("return count 3\n");
                 return 1 + count;
             }
             return count;
