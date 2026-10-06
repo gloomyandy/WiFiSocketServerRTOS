@@ -2,6 +2,10 @@
 
 Firmware for Espressif Wi-Fi modules on Duet boards. Based on [DuetWiFiSocketServer](https://github.com/Duet3D/DuetWiFiSocketServer), but ported to the newer ESP8266 RTOS SDK and ESP-IDF.
 
+## Licence
+
+The source files in this project are licensed under GPLv3, see http://www.gnu.org/licenses/gpl-3.0.en.html. The firmware links against code under other licences: the ESP-IDF and ESP8266 RTOS SDK components and the Espressif Wi-Fi and PHY binaries are Apache-2.0, lwIP and wpa_supplicant BSD-3-Clause, FreeRTOS and SPIFFS MIT, and the `HSPI` sources come from the esp8266 core for Arduino under LGPL-2.1-or-later. The generated SBOM lists every one of them with its version.
+
 ## Build
 
 Building the project generates `DuetWiFiServer.bin` or `DuetWiFiModule_*.bin` used for [`M997 S1`](https://docs.duet3d.com/User_manual/Reference/Gcodes/M997). ESP8266, ESP32, ESP32-S3 and ESP32-C3 are supported.
@@ -162,6 +166,12 @@ Afterwards, import this project in the `Import New Project` step.
 #### **IDE (Windows/macOS/Linux)**
 
 Eclipse and VSCode are supported through plugins. Read more about the plugin setup and build process [on the docs page](https://docs.espressif.com/projects/esp-idf/en/latest/esp32c/get-started/index.html#ide).
+
+## Software bill of materials
+
+`make all` writes `WiFiSocketServerRTOS-<version>-sbom.json`, a CycloneDX 1.6 SBOM covering all four firmware images; `make sbom` regenerates it on its own from whichever targets are currently built. Attach that file to the GitHub release alongside the binaries.
+
+The component list comes from the linker map of each image, so only libraries that are really linked in are listed, and the versions are read out of the SDK and toolchain trees at generation time. The SDKs appear as one component each; the upstream projects they bundle (lwIP, Mbed TLS, FreeRTOS, newlib, SPIFFS, wpa_supplicant, the Wi-Fi and PHY blobs) and the third-party sources vendored into `src/` appear as their own.
 
 ## Links
 
