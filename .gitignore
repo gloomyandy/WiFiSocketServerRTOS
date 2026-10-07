@@ -66,5 +66,11 @@ sdkconfig
 /ESP32S3/
 /ESP32C3/
 
+# Generated SBOM
+/WiFiSocketServerRTOS-*-sbom.json
+
+# Python
+__pycache__/
+
 # VSCode
 .vscode
