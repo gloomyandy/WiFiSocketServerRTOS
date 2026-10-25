@@ -2,13 +2,15 @@
  * SocketServer.cpp
  *
  *  Created on: 25 Mar 2017
- *      Author: David
+ *      Author: David, heavily modified for Ethernet and STM32 clients by Andy
  */
 
 #include "ecv.h"
 #undef yield
 #undef array
 #undef out
+
+#define SUPPORT_NETBIOS 1
 
 #include <cstring>
 #include <algorithm>
@@ -80,6 +82,13 @@ extern esp_rom_spiflash_chip_t g_rom_flashchip;
 #include "esp_wpa2.h"
 #else
 #include "esp_eap_client.h"
+#endif
+
+#if SUPPORT_NETBIOS
+#include "lwip/apps/netbiosns.h"
+/** size of a NetBIOS name */
+#define NETBIOS_NAME_LEN 16
+static bool usingNetbios = false;
 #endif
 
 #if ESP8266
@@ -570,6 +579,33 @@ void RemoveMdnsServices()
 	mdnsHostName[0] = 0;
 }
 
+#if SUPPORT_NETBIOS
+void StartNetbios()
+{
+	if (usingNetbios)
+		netbiosns_stop();
+	// netbios names are max 15 characters
+	char nbName[NETBIOS_NAME_LEN];
+	strncpy(nbName, webHostName, sizeof(nbName));
+	// make sure it is null terminated
+	nbName[sizeof(nbName)-1] = '\0';
+	netbiosns_init();
+	netbiosns_set_name(nbName);
+	debugPrint("Netbios started\n");
+	usingNetbios = true;
+}
+
+void StopNetbios()
+{
+	if (usingNetbios)
+	{
+		netbiosns_stop();
+		debugPrint("Netbios stopped\n");
+		usingNetbios = false;
+	}
+}
+#endif
+
 // Drop the BSSID pin StartClient set, so a reconnect may land on any AP of the network. The reconnect path never
 // rescans, so without this an AP that has gone away would be retried forever instead of falling back to another one
 static void ClearBssidPin()
@@ -750,6 +786,9 @@ void WiFiConnectionTask(void* data)
 				new_blink = ONBOARD_LED_CONNECTING;
 			} else if (currentState == WiFiState::connected ||
 				currentState == WiFiState::runningAsAccessPoint) {
+#if SUPPORT_NETBIOS
+				StartNetbios();
+#endif
 				new_blink = ONBOARD_LED_CONNECTED;
 			} else {
 				new_blink = ONBOARD_LED_IDLE;
@@ -1047,8 +1086,16 @@ pre(currentState == WiFiState::idle)
 #endif
 	}
 
+#if OLD_SDK
+	tcpip_adapter_set_hostname(TCPIP_ADAPTER_IF_STA, webHostName);
+#else
+	esp_err_t res = esp_netif_set_hostname(sta_netif, webHostName);
+	if (res != ESP_OK)
+	{
+		debugPrintf("failed to set hostname, error %x\n", res);
+	}
+#endif
 	memset(&staIpInfo, 0, sizeof(staIpInfo));
-
 	// On Arduino core, gateway and subnet is ignored
 	// if IP address is not specified.
 	if (wp.ip)
@@ -1333,6 +1380,9 @@ static void GotEthIP(void *arg, esp_event_base_t event_base,
 	debugPrint("~~~~~~~~~~~\n");
 	currentState = WiFiState::connected;
 	xTaskNotify(mainTaskHdl, TFR_REQUEST, eSetBits);
+#if SUPPORT_NETBIOS
+	StartNetbios();
+#endif
 	led_indicator_stop(led, ONBOARD_LED_IDLE);
 	led_indicator_stop(led, ONBOARD_LED_CONNECTING);
 	led_indicator_start(led, ONBOARD_LED_CONNECTED);
@@ -1397,6 +1447,16 @@ pre(currentState == WiFiState::idle)
 	}
 	currentState = WiFiState::connecting;
 
+	#if OLD_SDK
+		tcpip_adapter_set_hostname(TCPIP_ADAPTER_IF_STA, webHostName);
+#else
+		esp_err_t res = esp_netif_set_hostname(sta_netif, webHostName);
+		if (res != ESP_OK)
+		{
+			debugPrintf("failed to set hostname, error %x\n", res);
+		}
+#endif
+
 	// Look to see if we have any ethernet specific IP configuration
 	memset(&staIpInfo, 0, sizeof(staIpInfo));
 	WirelessConfigurationData wp;
@@ -1421,7 +1481,6 @@ pre(currentState == WiFiState::idle)
 	{
 		usingDhcpc = true;
 		esp_netif_dhcpc_stop(sta_netif);
-		//tcpip_adapter_dhcpc_start(TCPIP_ADAPTER_IF_ETH);
 	}
 	ESP_ERROR_CHECK(esp_eth_start(ethHandle));
 	//mdns_init();
@@ -2386,6 +2445,9 @@ debugPrintf("set module type %d\n", response->moduleType);
 			Connection::TerminateAll();						// terminate all connections
 			Listener::Stop(0);								// stop listening on all ports
 			RebuildServices();								// remove the MDNS services
+#if SUPPORT_NETBIOS
+			StopNetbios();									// and netbios
+#endif
 			switch (currentState)
 			{
 			case WiFiState::connected:
@@ -2406,6 +2468,7 @@ debugPrintf("set module type %d\n", response->moduleType);
 				break;
 
 			case WiFiState::runningAsAccessPoint:
+				RemoveMdnsServices();
 				dns.stop();
 				delay(20);									// try to give lwip time to recover from stopping everything
 				esp_wifi_stop();
